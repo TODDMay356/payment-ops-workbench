@@ -1,0 +1,989 @@
+<meta charset="utf-8">
+<title>商户支付成功率分析工具</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#f4f6f9; --card:#fff; --border:#e3e8ef; --ink:#1f2733; --muted:#6b7684;
+    --brand:#1f7a4d; --brand-soft:#e7f4ec; --warn:#b4600a; --warn-soft:#fdf3e6;
+    --bad:#c0392b; --bad-soft:#fdecea; --accent:#2563eb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1500px;margin:0 auto;padding:24px 20px 80px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 20px;font-size:13px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .card h2{font-size:15px;margin:0 0 14px;display:flex;align-items:center;gap:8px}
+  .row{display:flex;flex-wrap:wrap;gap:18px 26px;align-items:flex-end}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field label{font-size:12px;color:var(--muted)}
+  input[type=date],input[type=text],input[type=password],select{
+    height:34px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font:inherit;color:inherit;min-width:150px}
+  input[type=file]{font:inherit}
+  .radios{display:flex;gap:16px;flex-wrap:wrap}
+  .radios label{display:flex;align-items:center;gap:6px;color:var(--ink);font-size:13px;cursor:pointer}
+  button{height:36px;padding:0 18px;border:0;border-radius:8px;background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button.ghost{background:#fff;border:1px solid var(--border);color:var(--ink);font-weight:500}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px}
+  .drop{border:1.5px dashed var(--border);border-radius:10px;padding:16px;text-align:center;color:var(--muted);background:#fafbfc}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .kpi .k{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .kpi .v{font-size:24px;font-weight:700}
+  .kpi.bad .v{color:var(--bad)} .kpi.good .v{color:var(--brand)} .kpi.warn .v{color:var(--warn)}
+  .banner{border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:13px}
+  .banner.warn{background:var(--warn-soft);color:var(--warn);border:1px solid #f0d6ab}
+  .banner.ok{background:var(--brand-soft);color:var(--brand);border:1px solid #bfe3cd}
+  .banner.err{background:var(--bad-soft);color:var(--bad);border:1px solid #f3c9c4}
+  h2.group{font-size:16px;margin:26px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--border)}
+  details.sheet{background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden}
+  details.sheet>summary{cursor:pointer;padding:11px 16px;font-weight:600;font-size:13px;list-style:none;display:flex;justify-content:space-between;align-items:center}
+  details.sheet>summary::-webkit-details-marker{display:none}
+  details.sheet>summary .cnt{color:var(--muted);font-weight:400;font-size:12px}
+  .tbl-scroll{overflow-x:auto;border-top:1px solid var(--border)}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th,td{border:1px solid var(--border);padding:6px 9px;text-align:right;white-space:nowrap}
+  th{background:#f7f9fb;position:sticky;top:0;font-weight:600;text-align:right}
+  td:first-child,th:first-child{text-align:left;position:sticky;left:0;background:#fbfcfe;z-index:1}
+  th:first-child{z-index:2}
+  tr.total td{background:#f2f6f4;font-weight:700}
+  tr.sep td{background:#fbf7ec;color:var(--warn);font-style:italic;text-align:left}
+  pre.concl{white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px solid var(--border);
+            border-radius:10px;padding:16px 18px;font:12.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
+  .ai-box{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .muted{color:var(--muted)}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 18px}
+</style>
+
+<div class="wrap">
+  <h1>商户支付成功率分析工具 <span class="muted" style="font-size:13px;font-weight:400">v3.1 · 网页版</span></h1>
+  <p class="sub">上传支付流水 Excel，本地浏览器内完成清洗、维度分析、失败原因帕累托、维度交叉与异常检测。数据不上传服务器。</p>
+
+  <!-- 1. 上传 -->
+  <div class="card">
+    <h2>① 上传数据</h2>
+    <div class="drop" id="drop">
+      <input type="file" id="file" accept=".xlsx,.xls">
+      <div class="hint" id="fileInfo">支持 .xlsx / .xls，读取第一个工作表。列名按 config 的 COLUMN_MAP 自动识别。</div>
+    </div>
+  </div>
+
+  <!-- 2. 参数 -->
+  <div class="card">
+    <h2>② 分析参数</h2>
+    <div class="row" style="margin-bottom:16px">
+      <div class="field">
+        <label>时间筛选方式</label>
+        <div class="radios">
+          <label><input type="radio" name="tmode" value="single" checked> 单一时间范围（不做期间对比）</label>
+          <label><input type="radio" name="tmode" value="compare"> 上期 / 本期对比</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" id="singleRange" style="margin-bottom:16px">
+      <div class="field">
+        <label>时间范围</label>
+        <div class="radios">
+          <label><input type="radio" name="srange" value="all" checked> 全部数据</label>
+          <label><input type="radio" name="srange" value="range"> 指定范围</label>
+        </div>
+      </div>
+      <div class="field s-range-in" hidden><label>开始日期</label><input type="date" id="sStart"></div>
+      <div class="field s-range-in" hidden><label>结束日期</label><input type="date" id="sEnd"></div>
+    </div>
+
+    <div class="row" id="compareRange" hidden style="margin-bottom:16px">
+      <div class="field"><label>上期开始</label><input type="date" id="lStart"></div>
+      <div class="field"><label>上期结束</label><input type="date" id="lEnd"></div>
+      <div class="field"><label>本期开始</label><input type="date" id="cStart"></div>
+      <div class="field"><label>本期结束</label><input type="date" id="cEnd"></div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>分析维度</label>
+        <div class="radios">
+          <label><input type="radio" name="site" value="1" checked> 整体（所有站点合并）</label>
+          <label><input type="radio" name="site" value="2"> 按站点拆分</label>
+          <label><input type="radio" name="site" value="3"> 两者都要</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar" style="margin-top:18px">
+      <button id="run" disabled>计算分析</button>
+      <button id="export" class="ghost" disabled>导出 Excel</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <!-- 3. AI -->
+  <div class="card">
+    <h2>③ AI 智能总结 <span class="muted" style="font-weight:400;font-size:12px">（可选，在规则结论上再做一层归纳）</span></h2>
+    <div class="ai-box">
+      <div class="field" style="flex:1;min-width:260px">
+        <label>API Key（临时填写，不保存、不写入代码）</label>
+        <input type="password" id="aiKey" placeholder="sk-... （对接 DeepSeek，OpenAI 兼容接口）" autocomplete="off">
+      </div>
+      <button id="aiBtn" class="ghost" disabled>生成 AI 总结</button>
+    </div>
+    <div class="hint">模型 <code id="aiModelLabel"></code> · 端点 <code id="aiUrlLabel"></code>。浏览器直连第三方接口若被 CORS 拦截会提示，属正常现象。</div>
+    <div id="aiResult" style="margin-top:14px"></div>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script>
+/* ============================================================
+   配置（对应 config.py）
+   ============================================================ */
+const AMOUNT_BINS = [0, 1, 20, 50, 100, 500, 1000, 3000, 5000];
+const AMOUNT_LABELS = ["0-1","1-20","20-50","50-100","100-500","500-1000","1000-3000","3000-5000"];
+
+const COLUMN_MAP = {
+  "交易单号":"order_id","商户号":"merchant_id","商户名称":"merchant_name","交易币种":"currency",
+  "交易金额":"amount","支付方式":"payment_method","流水单状态":"status","支付失败原因":"fail_reason",
+  "支付时间":"pay_time","备案网址":"website","支付卡bin国家":"bin_country","是否3D交易":"is_3ds",
+  "风控3DS决策":"risk_3ds","政策3DS决策":"policy_3ds","商户3ds决策":"merchant_3ds",
+};
+
+const STATUS_SUCCESS = "支付成功";
+const STATUS_FAIL = "支付失败";
+const RISK_BLOCK_KEYWORD = "ZFFK00003";
+const DRILL_DOWN_TOP_N = 3;
+const L3_FAIL_KEYWORDS = ["MN3DSFAILB","MN3DSFAIL","3DS","3ds","ZFFK00003","风控系统拦截","风控拦截"];
+
+const ANOMALY_RATE_DROP_WARN = -10;
+const ANOMALY_RATE_DROP_URGENT = -20;
+const ANOMALY_MIN_SHARE = 5;
+const ANOMALY_BELOW_OVERALL_PCT = 15;
+const ANOMALY_MIN_SHARE_SINGLE = 5;
+const ANOMALY_LOW_RATE_ABS = 30;
+const ANOMALY_MIN_SHARE_ABS = 3;
+
+const AI_BASE_URL = "https://api.deepseek.com";
+const AI_MODEL = "deepseek-v4-pro";
+const AI_MAX_TOKENS = 2000;
+
+/* ============================================================
+   小工具
+   ============================================================ */
+const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
+const r4 = x => Math.round((x + Number.EPSILON) * 10000) / 10000;
+const pct = (n, d) => d > 0 ? r2(n / d * 100) : 0;
+// pandas 默认按 key 升序分组：用码点排序模拟
+const bySortedKey = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+// 一张表的统一结构
+function T(columns, data){ return { columns, data: data || [] }; }
+
+/* 聚合：key -> {n, succ}，跳过 null/undefined（对应 pandas groupby dropna=True） */
+function aggregate(rows, keyField){
+  const m = new Map();
+  for(const r of rows){
+    let k = r[keyField];
+    if(k === null || k === undefined) continue;
+    k = String(k);
+    let e = m.get(k);
+    if(!e){ e = {n:0, succ:0}; m.set(k, e); }
+    e.n++;
+    if(r.status === STATUS_SUCCESS) e.succ++;
+  }
+  return m;
+}
+
+/* ============================================================
+   数据读取与清洗（对应 load_and_clean）
+   ============================================================ */
+let PRESENT = new Set();   // 源数据中存在的标准列
+function hasCol(col){ return PRESENT.has(col); }
+
+function cutAmount(v){
+  if(v === null || v === undefined || isNaN(v)) return null;
+  if(v < AMOUNT_BINS[0] || v > AMOUNT_BINS[AMOUNT_BINS.length-1]) return null;
+  for(let i=0;i<AMOUNT_LABELS.length;i++){
+    const lo = AMOUNT_BINS[i], hi = AMOUNT_BINS[i+1];
+    if(i === 0){ if(v >= lo && v <= hi) return AMOUNT_LABELS[i]; }
+    else if(v > lo && v <= hi) return AMOUNT_LABELS[i];
+  }
+  return null;
+}
+
+function toNum(v){
+  if(v === null || v === undefined || v === "") return 0;
+  const n = typeof v === "number" ? v : parseFloat(String(v).replace(/,/g,""));
+  return isNaN(n) ? 0 : n;
+}
+
+function toDate(v){
+  if(v instanceof Date) return isNaN(v) ? null : v;
+  if(v === null || v === undefined || v === "") return null;
+  if(typeof v === "number"){ // excel 序列号兜底
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return isNaN(d) ? null : d;
+  }
+  const d = new Date(String(v).replace(/-/g,"/"));
+  return isNaN(d) ? null : d;
+}
+
+function cleanWebsite(s){
+  s = String(s).trim().replace(/^https?:\/\//i,"").replace(/^www\./i,"");
+  return s.replace(/\/+$/,"");
+}
+
+function loadAndClean(rawRows, headers){
+  // 建立 源列名(trim) -> 标准列名
+  const rename = {};
+  headers.forEach(h => { const t = String(h).trim(); if(COLUMN_MAP[t]) rename[t] = COLUMN_MAP[t]; });
+  PRESENT = new Set(Object.values(rename));
+
+  const out = [];
+  for(const raw of rawRows){
+    const r = {};
+    for(const key in raw){
+      const t = String(key).trim();
+      if(COLUMN_MAP[t]) r[COLUMN_MAP[t]] = raw[key];
+    }
+    // amount
+    r.amount = toNum(r.amount);
+    // bin_country: nan->"" , strip
+    if(PRESENT.has("bin_country")){
+      let b = (r.bin_country === null || r.bin_country === undefined) ? "" : String(r.bin_country).trim();
+      if(b.toLowerCase() === "nan") b = "";
+      r.bin_country = b;
+    }
+    // pay_time -> 有效才保留
+    const pt = toDate(r.pay_time);
+    if(pt === null) continue;               // dropna(subset=["pay_time"])
+    r.pay_time = pt;
+    // website 清洗
+    if(PRESENT.has("website") && r.website !== null && r.website !== undefined){
+      r.website = cleanWebsite(r.website);
+    }
+    // status/fail_reason 归一
+    if(r.status !== null && r.status !== undefined) r.status = String(r.status).trim();
+    if(r.fail_reason !== undefined && r.fail_reason !== null) r.fail_reason = String(r.fail_reason);
+    else r.fail_reason = null;
+    // currency
+    if(r.currency !== null && r.currency !== undefined) r.currency = String(r.currency).trim();
+    // amount_range（null = 超范围/缺失，对应 pd.cut 的 NaN）
+    r.amount_range = cutAmount(r.amount);
+    out.push(r);
+  }
+  return out;
+}
+
+/* ============================================================
+   排除风控 / L3 失败（对应 exclude_risk / exclude_l3_fail / has_dim_data）
+   ============================================================ */
+function excludeRisk(rows){
+  if(!hasCol("fail_reason")) return rows;
+  return rows.filter(r => !(r.fail_reason && String(r.fail_reason).includes(RISK_BLOCK_KEYWORD)));
+}
+function excludeL3(rows){
+  if(!hasCol("fail_reason")) return rows;
+  return rows.filter(r => {
+    if(r.fail_reason === null || r.fail_reason === undefined) return true; // isna -> 保留
+    const s = String(r.fail_reason);
+    return !L3_FAIL_KEYWORDS.some(kw => s.includes(kw));
+  });
+}
+function hasDimData(rows, col){
+  if(!rows || !hasCol(col) || rows.length === 0) return false;
+  return rows.some(r => { const v = r[col]; return v !== null && v !== undefined && String(v).trim() !== ""; });
+}
+function currencyBreakdown(rows){
+  if(!hasCol("currency") || rows.length === 0) return [];
+  const total = rows.length, m = new Map();
+  for(const r of rows){ const c = (r.currency===null||r.currency===undefined||r.currency==="")?"未知":String(r.currency); m.set(c,(m.get(c)||0)+1); }
+  return [...m.entries()].sort((a,b)=>b[1]-a[1]).map(([c,n])=>[c,n,r2(n/total*100)]);
+}
+
+/* ============================================================
+   失败原因表（对应 generate_failreason_table）
+   ============================================================ */
+function generateFailreasonTable(dfCurr, dfLast){
+  const compare = dfLast != null;
+  const totalCurr = dfCurr.length, totalLast = compare ? dfLast.length : 0;
+  const cols = compare
+    ? ["支付失败原因","总计_上期","总计_本期","单量对比值","占总量比_上期","占总量比_本期","占总量比差额","占失败比_上期","占失败比_本期","累计占失败比_本期"]
+    : ["支付失败原因","笔数","占总量比","占失败比","累计占失败比"];
+  if(totalCurr === 0 && totalLast === 0) return T(cols);
+
+  const data = [];
+  // ---- 状态汇总 ----
+  const stC = aggregate(dfCurr, "status");
+  if(compare){
+    const stL = aggregate(dfLast, "status");
+    const keys = [...new Set([...stC.keys(), ...stL.keys()])].sort(bySortedKey);
+    for(const k of keys){
+      const c = stC.get(k)?.n || 0, l = stL.get(k)?.n || 0;
+      data.push({"支付失败原因":k,"总计_上期":l,"总计_本期":c,"单量对比值":c-l,
+        "占总量比_上期":pct(l,totalLast),"占总量比_本期":pct(c,totalCurr),
+        "占总量比差额":r2(pct(c,totalCurr)-pct(l,totalLast)),
+        "占失败比_上期":"","占失败比_本期":"","累计占失败比_本期":""});
+    }
+  } else {
+    const keys = [...stC.keys()].sort(bySortedKey);
+    for(const k of keys){
+      const c = stC.get(k).n;
+      data.push({"支付失败原因":k,"笔数":c,"占总量比":pct(c,totalCurr),"占失败比":"","累计占失败比":""});
+    }
+  }
+
+  // ---- 失败原因明细 ----
+  const failC = dfCurr.filter(r => r.status === STATUS_FAIL);
+  const failL = compare ? dfLast.filter(r => r.status === STATUS_FAIL) : null;
+  const fTotC = failC.length, fTotL = compare ? failL.length : 0;
+
+  data.push(Object.fromEntries(cols.map(c => [c, c==="支付失败原因" ? "--- 以下为失败原因明细（占失败比分母=失败总笔数）---" : ""])));
+  data[data.length-1].__sep = true;
+
+  if(fTotC > 0 || (compare && fTotL > 0)){
+    if(compare){
+      const gc = new Map(), gl = new Map();
+      for(const r of failC){ const k=r.fail_reason; if(k==null) continue; gc.set(String(k),(gc.get(String(k))||0)+1); }
+      for(const r of failL){ const k=r.fail_reason; if(k==null) continue; gl.set(String(k),(gl.get(String(k))||0)+1); }
+      let rows = [...new Set([...gc.keys(),...gl.keys()])].map(k=>{
+        const c=gc.get(k)||0,l=gl.get(k)||0;
+        return {k,l,c,diff:c-l,pl:pct(l,totalLast),pc:pct(c,totalCurr),
+          fl:pct(l,fTotL),fc:pct(c,fTotC)};
+      });
+      rows.sort((a,b)=>b.c-a.c);
+      let cum=0;
+      for(const x of rows){ cum=r2(cum+x.fc);
+        data.push({"支付失败原因":x.k,"总计_上期":x.l,"总计_本期":x.c,"单量对比值":x.diff,
+          "占总量比_上期":x.pl,"占总量比_本期":x.pc,"占总量比差额":r2(x.pc-x.pl),
+          "占失败比_上期":x.fl,"占失败比_本期":x.fc,"累计占失败比_本期":cum}); }
+    } else {
+      const g = new Map();
+      for(const r of failC){ const k=r.fail_reason; if(k==null) continue; g.set(String(k),(g.get(String(k))||0)+1); }
+      let rows = [...g.entries()].map(([k,c])=>({k,c,p:pct(c,totalCurr),f:pct(c,fTotC)}));
+      rows.sort((a,b)=>b.c-a.c);
+      let cum=0;
+      for(const x of rows){ cum=r2(cum+x.f);
+        data.push({"支付失败原因":x.k,"笔数":x.c,"占总量比":x.p,"占失败比":x.f,"累计占失败比":cum}); }
+    }
+  }
+
+  // ---- 合计 ----
+  const tot = Object.fromEntries(cols.map(c=>[c,""]));
+  tot["支付失败原因"]="合计"; tot.__total=true;
+  if(compare){ tot["总计_上期"]=totalLast; tot["总计_本期"]=totalCurr; tot["单量对比值"]=totalCurr-totalLast; }
+  else { tot["笔数"]=totalCurr; tot["占总量比"]= totalCurr>0?100:0; }
+  data.push(tot);
+  return T(cols, data);
+}
+
+/* ============================================================
+   维度分析表（对应 generate_grouped_table）
+   categories: 传入则视为 pd.cut 的分类维度（如 amount_range），播种全部分类、丢弃非分类键
+   ============================================================ */
+function groupedRows(rows, col, categories){
+  const m = aggregate(rows, col);
+  let keys;
+  if(categories){
+    for(const c of categories) if(!m.has(c)) m.set(c,{n:0,succ:0});
+    for(const k of [...m.keys()]) if(!categories.includes(k)) m.delete(k);
+    keys = categories.slice();
+  } else {
+    keys = [...m.keys()];
+  }
+  return keys.map(k => ({ key:k, n:m.get(k).n, succ:m.get(k).succ }));
+}
+
+function generateGroupedTable(dfCurr, groupCol, groupLabel, dfLast, categories){
+  const compare = dfLast != null;
+  const totalCurr = dfCurr.length, totalLast = compare ? dfLast.length : 0;
+  const cols = compare
+    ? [groupLabel,"交易单量_上期","交易单量_本期","单量对比值","占比_上期","占比_本期","占比差额","通过率_上期","通过率_本期","通过率对比值","乘积"]
+    : [groupLabel,"交易笔数","占比","成功笔数","通过率","影响力"];
+  if(totalCurr===0 && totalLast===0) return T(cols);
+  if(!hasCol(groupCol) && groupCol!=="amount_range") return T(cols);
+
+  if(compare){
+    const gc = new Map(groupedRows(dfCurr,groupCol,categories).map(x=>[x.key,x]));
+    const gl = new Map(groupedRows(dfLast,groupCol,categories).map(x=>[x.key,x]));
+    const keys = categories ? categories.slice() : [...new Set([...gc.keys(),...gl.keys()])];
+    let rows = keys.map(k=>{
+      const c=gc.get(k)||{n:0,succ:0}, l=gl.get(k)||{n:0,succ:0};
+      const pC=pct(c.n,totalCurr), pL=pct(l.n,totalLast);
+      const rC=pct(c.succ,c.n), rL=pct(l.succ,l.n);
+      const rDiff=r2(rC-rL);
+      return {key:k,nl:l.n,nc:c.n,diff:c.n-l.n,pL,pC,pd:r2(pC-pL),rL,rC,rDiff,prod:r4(pC/100*rDiff)};
+    });
+    rows.sort((a,b)=>Math.abs(b.prod)-Math.abs(a.prod));
+    const data = rows.map(x=>({[groupLabel]:x.key,"交易单量_上期":x.nl,"交易单量_本期":x.nc,"单量对比值":x.diff,
+      "占比_上期":x.pL,"占比_本期":x.pC,"占比差额":x.pd,"通过率_上期":x.rL,"通过率_本期":x.rC,"通过率对比值":x.rDiff,"乘积":x.prod}));
+    const tot=Object.fromEntries(cols.map(c=>[c,""])); tot[groupLabel]="合计"; tot.__total=true;
+    tot["交易单量_上期"]=rows.reduce((s,x)=>s+x.nl,0); tot["交易单量_本期"]=rows.reduce((s,x)=>s+x.nc,0);
+    tot["单量对比值"]=rows.reduce((s,x)=>s+x.diff,0); tot["乘积"]=r4(rows.reduce((s,x)=>s+x.prod,0));
+    data.push(tot);
+    return T(cols,data);
+  } else {
+    const g = groupedRows(dfCurr,groupCol,categories);
+    const sumSucc = g.reduce((s,x)=>s+x.succ,0);
+    const overall = totalCurr>0 ? sumSucc/totalCurr*100 : 0;
+    let rows = g.map(x=>{
+      const p=pct(x.n,totalCurr), rate=pct(x.succ,x.n);
+      return {key:x.key,n:x.n,succ:x.succ,p,rate,impact:r4(p/100*(overall-rate))};
+    });
+    rows.sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact));
+    const data = rows.map(x=>({[groupLabel]:x.key,"交易笔数":x.n,"占比":x.p,"成功笔数":x.succ,"通过率":x.rate,"影响力":x.impact}));
+    const tot=Object.fromEntries(cols.map(c=>[c,""])); tot[groupLabel]="合计"; tot.__total=true;
+    tot["交易笔数"]=rows.reduce((s,x)=>s+x.n,0); tot["成功笔数"]=rows.reduce((s,x)=>s+x.succ,0); tot["通过率"]=r2(overall);
+    data.push(tot);
+    return T(cols,data);
+  }
+}
+
+/* ============================================================
+   通用：取绝对值 TOP N 行 / TOP N 取值
+   ============================================================ */
+function dataRows(table, label){ return table.data.filter(r => r[label] !== "合计" && !r.__sep); }
+function filterTopNRows(table, label, rankCol, topN){
+  let d = dataRows(table, label).filter(r => r[rankCol] !== "" && r[rankCol] != null);
+  d = d.map(r => ({r, a: Math.abs(parseFloat(r[rankCol])||0)})).sort((x,y)=>y.a-x.a).slice(0,topN).map(x=>x.r);
+  return T(table.columns, d);
+}
+function getTopNValues(table, label, rankCol, topN){
+  let d = dataRows(table, label).filter(r => r[label]!=null && String(r[label]).trim()!=="" && r[rankCol]!=="" && r[rankCol]!=null);
+  d = d.map(r=>({v:r[label], a:Math.abs(parseFloat(r[rankCol])||0)})).sort((x,y)=>y.a-x.a).slice(0,topN);
+  return d.map(x=>x.v);
+}
+
+/* ============================================================
+   维度×维度 长列表（对应 generate_cross_table）
+   ============================================================ */
+function crossAgg(rows, colA, colB){
+  const m = new Map();
+  for(const r of rows){
+    const a=r[colA], b=r[colB];
+    if(a==null || b==null) continue;         // observed=True + 双键 dropna
+    const k = String(a)+" "+String(b);
+    let e=m.get(k); if(!e){e={a:String(a),b:String(b),n:0,succ:0}; m.set(k,e);}
+    e.n++; if(r.status===STATUS_SUCCESS) e.succ++;
+  }
+  return m;
+}
+function generateCrossTable(dfCurr, colA, labelA, colB, labelB, dfLast){
+  const compare = dfLast != null;
+  const totalCurr=dfCurr.length, totalLast=compare?dfLast.length:0;
+  const cols = compare
+    ? [labelA,labelB,"交易单量_上期","交易单量_本期","单量对比值","占比_上期","占比_本期","占比差额","通过率_上期","通过率_本期","通过率对比值","乘积"]
+    : [labelA,labelB,"交易笔数","占比","成功笔数","通过率","影响力"];
+  if(totalCurr===0 && totalLast===0) return T(cols);
+  if((!hasCol(colA)&&colA!=="amount_range")||(!hasCol(colB)&&colB!=="amount_range")) return T(cols);
+
+  if(compare){
+    const gc=crossAgg(dfCurr,colA,colB), gl=crossAgg(dfLast,colA,colB);
+    const keys=[...new Set([...gc.keys(),...gl.keys()])];
+    let rows=keys.map(k=>{
+      const c=gc.get(k)||{n:0,succ:0}, l=gl.get(k)||{n:0,succ:0};
+      const ref=gc.get(k)||gl.get(k);
+      const pC=pct(c.n,totalCurr),pL=pct(l.n,totalLast),rC=pct(c.succ,c.n),rL=pct(l.succ,l.n),rDiff=r2(rC-rL);
+      return {a:ref.a,b:ref.b,nl:l.n,nc:c.n,diff:c.n-l.n,pL,pC,pd:r2(pC-pL),rL,rC,rDiff,prod:r4(pC/100*rDiff)};
+    }).filter(x=>x.nl>0||x.nc>0);
+    rows.sort((a,b)=>Math.abs(b.prod)-Math.abs(a.prod));
+    const data=rows.map(x=>({[labelA]:x.a,[labelB]:x.b,"交易单量_上期":x.nl,"交易单量_本期":x.nc,"单量对比值":x.diff,
+      "占比_上期":x.pL,"占比_本期":x.pC,"占比差额":x.pd,"通过率_上期":x.rL,"通过率_本期":x.rC,"通过率对比值":x.rDiff,"乘积":x.prod}));
+    const tot=Object.fromEntries(cols.map(c=>[c,""])); tot[labelA]="合计"; tot.__total=true;
+    tot["交易单量_上期"]=rows.reduce((s,x)=>s+x.nl,0); tot["交易单量_本期"]=rows.reduce((s,x)=>s+x.nc,0);
+    tot["单量对比值"]=rows.reduce((s,x)=>s+x.diff,0); tot["乘积"]=r4(rows.reduce((s,x)=>s+x.prod,0));
+    data.push(tot); return T(cols,data);
+  } else {
+    const g=[...crossAgg(dfCurr,colA,colB).values()].filter(x=>x.n>0);
+    const sumSucc=g.reduce((s,x)=>s+x.succ,0), overall=totalCurr>0?sumSucc/totalCurr*100:0;
+    let rows=g.map(x=>{const p=pct(x.n,totalCurr),rate=pct(x.succ,x.n);return {...x,p,rate,impact:r4(p/100*(overall-rate))};});
+    rows.sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact));
+    const data=rows.map(x=>({[labelA]:x.a,[labelB]:x.b,"交易笔数":x.n,"占比":x.p,"成功笔数":x.succ,"通过率":x.rate,"影响力":x.impact}));
+    const tot=Object.fromEntries(cols.map(c=>[c,""])); tot[labelA]="合计"; tot.__total=true;
+    tot["交易笔数"]=rows.reduce((s,x)=>s+x.n,0); tot["成功笔数"]=rows.reduce((s,x)=>s+x.succ,0); tot["通过率"]=r2(overall);
+    data.push(tot); return T(cols,data);
+  }
+}
+
+/* ============================================================
+   维度×维度 矩阵（对应 generate_cross_matrix，始终看本期数据）
+   ============================================================ */
+function generateCrossMatrix(dfCurr, colA, labelA, colB, labelB){
+  if((!hasCol(colA)&&colA!=="amount_range")||(!hasCol(colB)&&colB!=="amount_range")||dfCurr.length===0) return null;
+  const norm = v => { let s=(v==null)?"":String(v).trim(); if(["nan","none",""].includes(s.toLowerCase()))s=""; return s; };
+  const rows = dfCurr.filter(r => norm(r[colA])!=="" && norm(r[colB])!=="");
+  if(rows.length===0) return null;
+
+  const rowKeys=[...new Set(rows.map(r=>norm(r[colA])))].sort(bySortedKey);
+  const colKeys=[...new Set(rows.map(r=>norm(r[colB])))].sort(bySortedKey);
+  const cnt={}, suc={};
+  for(const rk of rowKeys){cnt[rk]={};suc[rk]={};for(const ck of colKeys){cnt[rk][ck]=0;suc[rk][ck]=0;}}
+  for(const r of rows){const rk=norm(r[colA]),ck=norm(r[colB]);cnt[rk][ck]++;if(r.status===STATUS_SUCCESS)suc[rk][ck]++;}
+  const cell=(c,s)=> c===0?"":`${c}笔(${r2(s/c*1000)/10}%)`;
+
+  const headCol = `${labelA}↓ \\ ${labelB}→`;
+  const cols=[headCol,...colKeys,"行合计"];
+  const data=[];
+  for(const rk of rowKeys){
+    const o={[headCol]:rk}; let rTot=0,rSuc=0;
+    for(const ck of colKeys){o[ck]=cell(cnt[rk][ck],suc[rk][ck]); rTot+=cnt[rk][ck]; rSuc+=suc[rk][ck];}
+    o["行合计"]=cell(rTot,rSuc); data.push(o);
+  }
+  const colTot={[headCol]:"列合计"}; colTot.__total=true; let gT=0,gS=0;
+  for(const ck of colKeys){let cT=0,cS=0;for(const rk of rowKeys){cT+=cnt[rk][ck];cS+=suc[rk][ck];}colTot[ck]=cell(cT,cS);gT+=cT;gS+=cS;}
+  colTot["行合计"]=cell(gT,gS); data.push(colTot);
+  return T(cols,data);
+}
+
+/* ============================================================
+   维度×失败原因（对应 generate_dim_failreason_cross）
+   ============================================================ */
+function generateDimFailreasonCross(dfCurrEx, colA, labelA, dfLastEx, onlyDims){
+  const compare = dfLastEx != null;
+  const cols = compare
+    ? [labelA,"支付失败原因","失败笔数_上期","失败笔数_本期","失败单量对比值","占该维度失败比_上期","占该维度失败比_本期","占总失败比_本期"]
+    : [labelA,"支付失败原因","失败笔数","占该维度失败比","占总失败比"];
+  if(!hasCol(colA) && colA!=="amount_range") return T(cols);
+
+  let failC = excludeL3(dfCurrEx.filter(r=>r.status===STATUS_FAIL));
+  let failL = compare ? excludeL3(dfLastEx.filter(r=>r.status===STATUS_FAIL)) : null;
+  if(onlyDims){
+    const keep = new Set(onlyDims.map(String));
+    failC = failC.filter(r=>keep.has(String(r[colA])));
+    if(compare) failL = failL.filter(r=>keep.has(String(r[colA])));
+  }
+  const fTotC=failC.length, fTotL=compare?failL.length:0;
+  if(fTotC===0 && fTotL===0) return T(cols);
+
+  const key=(r)=>{const a=r[colA],f=r.fail_reason; if(a==null||f==null) return null; return String(a)+" "+String(f);};
+  const dimTot = (rows)=>{const m=new Map();for(const r of rows){const a=r[colA];if(a==null)continue;m.set(String(a),(m.get(String(a))||0)+1);}return m;};
+
+  if(compare){
+    const gc=new Map(),gl=new Map();
+    for(const r of failC){const k=key(r);if(!k)continue;let e=gc.get(k);if(!e){e={a:String(r[colA]),f:String(r.fail_reason),n:0};gc.set(k,e);}e.n++;}
+    for(const r of failL){const k=key(r);if(!k)continue;let e=gl.get(k);if(!e){e={a:String(r[colA]),f:String(r.fail_reason),n:0};gl.set(k,e);}e.n++;}
+    const dtC=dimTot(failC), dtL=dimTot(failL);
+    const keys=[...new Set([...gc.keys(),...gl.keys()])];
+    let rows=keys.map(k=>{const c=gc.get(k),l=gl.get(k),ref=c||l;const nc=c?c.n:0,nl=l?l.n:0;
+      return {a:ref.a,f:ref.f,nl,nc,diff:nc-nl,pdl:pct(nl,dtL.get(ref.a)||0),pdc:pct(nc,dtC.get(ref.a)||0),ptc:pct(nc,fTotC)};});
+    rows.sort((a,b)=>b.nc-a.nc);
+    const data=rows.map(x=>({[labelA]:x.a,"支付失败原因":x.f,"失败笔数_上期":x.nl,"失败笔数_本期":x.nc,"失败单量对比值":x.diff,
+      "占该维度失败比_上期":x.pdl,"占该维度失败比_本期":x.pdc,"占总失败比_本期":x.ptc}));
+    const tot=Object.fromEntries(cols.map(c=>[c,""]));tot[labelA]="合计";tot.__total=true;
+    tot["失败笔数_上期"]=rows.reduce((s,x)=>s+x.nl,0);tot["失败笔数_本期"]=rows.reduce((s,x)=>s+x.nc,0);tot["失败单量对比值"]=rows.reduce((s,x)=>s+x.diff,0);
+    data.push(tot); return T(cols,data);
+  } else {
+    const g=new Map();
+    for(const r of failC){const k=key(r);if(!k)continue;let e=g.get(k);if(!e){e={a:String(r[colA]),f:String(r.fail_reason),n:0};g.set(k,e);}e.n++;}
+    const dt=dimTot(failC);
+    let rows=[...g.values()].map(x=>({...x,pd:pct(x.n,dt.get(x.a)||0),pt:pct(x.n,fTotC)}));
+    rows.sort((a,b)=>b.n-a.n);
+    const data=rows.map(x=>({[labelA]:x.a,"支付失败原因":x.f,"失败笔数":x.n,"占该维度失败比":x.pd,"占总失败比":x.pt}));
+    const tot=Object.fromEntries(cols.map(c=>[c,""]));tot[labelA]="合计";tot.__total=true;
+    tot["失败笔数"]=rows.reduce((s,x)=>s+x.n,0);
+    data.push(tot); return T(cols,data);
+  }
+}
+
+/* ============================================================
+   编排：维度×维度 三张表 / 维度×失败 两张表
+   ============================================================ */
+function pushDimDim(dfCurrEx, prefix, colA, labelA, shortA, colB, labelB, shortB, sheets, dfLastEx){
+  const compare = dfLastEx != null;
+  const full = generateCrossTable(dfCurrEx,colA,labelA,colB,labelB,compare?dfLastEx:null);
+  const rankCol = compare ? "乘积" : "影响力";
+  const top = filterTopNRows(full,labelA,rankCol,DRILL_DOWN_TOP_N);
+  const matrix = generateCrossMatrix(dfCurrEx,colA,labelA,colB,labelB);
+  const combo=`${shortA}x${shortB}`;
+  sheets.push([`${prefix}_${combo}_全量`,full]);
+  sheets.push([`${prefix}_${combo}_高影响力`,top]);
+  sheets.push([`${prefix}_${combo}_矩阵`, matrix || T(["（无有效数据）"])]);
+}
+function pushDimFail(dfCurrEx, prefix, colA, labelA, shortA, singleTable, sheets, dfLastEx){
+  const compare = dfLastEx != null;
+  const rankCol = compare ? "乘积" : "影响力";
+  const full = generateDimFailreasonCross(dfCurrEx,colA,labelA,compare?dfLastEx:null,null);
+  const topVals = getTopNValues(singleTable,labelA,rankCol,DRILL_DOWN_TOP_N);
+  const top = topVals.length ? generateDimFailreasonCross(dfCurrEx,colA,labelA,compare?dfLastEx:null,topVals) : T(full.columns);
+  const combo=`${shortA}x失败`;
+  sheets.push([`${prefix}_${combo}_全量`,full]);
+  sheets.push([`${prefix}_${combo}_高影响力`,top]);
+}
+
+/* ============================================================
+   异常检测（对应 find_anomalies）
+   ============================================================ */
+function findAnomalies(tablesWithLabels, compare){
+  const out=[];
+  for(const [table,label] of tablesWithLabels){
+    if(!table || table.data.length===0) continue;
+    const d = dataRows(table,label);
+    if(d.length===0) continue;
+    if(compare){
+      for(const row of d){
+        const name=String(row[label]);
+        const rd=parseFloat(row["通过率对比值"])||0, pc=parseFloat(row["占比_本期"])||0;
+        if(rd<=ANOMALY_RATE_DROP_WARN && pc>=ANOMALY_MIN_SHARE) out.push(`${name}：通过率下降 ${Math.abs(rd)} 个百分点，占比 ${pc}%，影响显著`);
+        if(rd<=ANOMALY_RATE_DROP_URGENT) out.push(`${name}：通过率暴跌 ${Math.abs(rd)} 个百分点，需紧急关注`);
+      }
+    } else {
+      const totalRow = table.data.find(r=>r[label]==="合计"); if(!totalRow) continue;
+      const overall=parseFloat(totalRow["通过率"])||0;
+      for(const row of d){
+        const name=String(row[label]);
+        const rate=parseFloat(row["通过率"])||0, p=parseFloat(row["占比"])||0;
+        if(p>=ANOMALY_MIN_SHARE_SINGLE && (overall-rate)>=ANOMALY_BELOW_OVERALL_PCT)
+          out.push(`${name}：通过率 ${rate}%，低于整体 ${overall}% 达 ${r2(overall-rate)*1/1} 个百分点，占比 ${p}%`);
+        if(p>=ANOMALY_MIN_SHARE_ABS && rate<ANOMALY_LOW_RATE_ABS)
+          out.push(`${name}：通过率仅 ${rate}%（极低），占比 ${p}%，需紧急关注`);
+      }
+    }
+  }
+  return out;
+}
+
+/* ============================================================
+   文字结论（对应 append_dim_conclusion / generate_conclusion）
+   ============================================================ */
+function appendDimConclusion(table, label, C, compare){
+  if(!table || table.data.length===0){ C.push(label==="支付卡BIN国家"?"  无数据（本地支付/钱包等无卡BIN）":"  无数据"); return; }
+  const d=dataRows(table,label);
+  if(d.length===0){ C.push("  无数据"); return; }
+  const rankCol=compare?"乘积":"影响力";
+  const top=d.map(r=>({r,a:Math.abs(parseFloat(r[rankCol])||0)})).sort((x,y)=>y.a-x.a).slice(0,compare?3:5).map(x=>x.r);
+  for(const row of top){
+    const name=String(row[label]);
+    if(compare){
+      const rdf=parseFloat(row["通过率对比值"])||0;
+      const dir=rdf<0?"下降":rdf>0?"上升":"持平";
+      C.push(`  - ${name}：占比 ${row["占比_本期"]}%，通过率 ${row["通过率_上期"]}% -> ${row["通过率_本期"]}%（${dir} ${Math.abs(rdf)} 个百分点），乘积 ${row["乘积"]}`);
+    } else {
+      C.push(`  - ${name}：占比 ${row["占比"]}%，通过率 ${row["通过率"]}%，影响力 ${row["影响力"]}`);
+    }
+  }
+}
+
+function fmtDate(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+
+function generateConclusion(prefix, dfCurr, dfLast, tBin, tAmount, tMethod, C){
+  const compare = dfLast != null;
+  const totalCurr=dfCurr.length, totalLast=compare?dfLast.length:0;
+  const succCurr=dfCurr.filter(r=>r.status===STATUS_SUCCESS).length;
+  const rateCurr=totalCurr>0?r2(succCurr/totalCurr*100):0;
+
+  C.push("=".repeat(60)); C.push(`【${prefix}】分析结论`); C.push("=".repeat(60)); C.push("");
+  C.push("一、整体概览");
+  if(compare){
+    const succLast=dfLast.filter(r=>r.status===STATUS_SUCCESS).length;
+    const rateLast=totalLast>0?r2(succLast/totalLast*100):0;
+    const volChange=totalCurr-totalLast, volPct=totalLast>0?r2(volChange/totalLast*100):0, rateChange=r2(rateCurr-rateLast);
+    C.push(`  交易量：上期 ${totalLast} 笔 -> 本期 ${totalCurr} 笔（${volChange>=0?"增长":"下降"} ${Math.abs(volChange)} 笔，${Math.abs(volPct)}%）`);
+    C.push(`  成功率：上期 ${rateLast}% -> 本期 ${rateCurr}%（${rateChange>=0?"上升":"下降"} ${Math.abs(rateChange)} 个百分点）`);
+    if(rateChange<=-10) C.push("  !! 成功率大幅下降，需重点关注");
+    else if(rateChange<=-3) C.push("  ! 成功率有所下降，建议关注");
+    else if(rateChange>=3) C.push("  成功率有所改善");
+    else C.push("  成功率基本持平");
+  } else {
+    if(totalCurr>0){
+      let mn=dfCurr[0].pay_time,mx=dfCurr[0].pay_time;
+      for(const r of dfCurr){ if(r.pay_time<mn)mn=r.pay_time; if(r.pay_time>mx)mx=r.pay_time; }
+      C.push(`  分析时段：${fmtDate(mn)} ~ ${fmtDate(mx)}`);
+    }
+    C.push(`  总交易量：${totalCurr} 笔`);
+    C.push(`  整体成功率：${rateCurr}%`);
+    if(rateCurr>=80) C.push("  成功率处于较好水平");
+    else if(rateCurr>=60) C.push("  成功率处于一般水平，有优化空间");
+    else C.push("  !! 成功率偏低，需重点关注");
+  }
+  const cur=currencyBreakdown(dfCurr);
+  if(cur.length) C.push(`  涉及币种：${cur.map(([c,n,p])=>`${c}(${n}笔,${p}%)`).join("，")}`);
+  C.push("");
+
+  C.push("二、失败原因 " + (compare?"TOP 3（占比恶化最大的）":"TOP 5"));
+  const failC=dfCurr.filter(r=>r.status===STATUS_FAIL);
+  if(compare){
+    const failL=dfLast.filter(r=>r.status===STATUS_FAIL);
+    if(failC.length>0){
+      const gc=new Map(),gl=new Map();
+      for(const r of failC){const k=r.fail_reason;if(k==null)continue;gc.set(String(k),(gc.get(String(k))||0)+1);}
+      for(const r of failL){const k=r.fail_reason;if(k==null)continue;gl.set(String(k),(gl.get(String(k))||0)+1);}
+      let rows=[...new Set([...gc.keys(),...gl.keys()])].map(k=>{const c=gc.get(k)||0,l=gl.get(k)||0;
+        const pc=pct(c,totalCurr),pl=pct(l,totalLast);return {k,pc,pl,pd:r2(pc-pl)};});
+      rows.sort((a,b)=>b.pd-a.pd); rows=rows.slice(0,3);
+      for(const x of rows){ C.push(`  - ${String(x.k).slice(0,80)}`);
+        C.push(`    占比：${x.pl}% -> ${x.pc}%（${x.pd>0?"恶化":"改善"} ${Math.abs(x.pd)}%）`); }
+    } else C.push("  本期无失败数据");
+  } else {
+    if(failC.length>0){
+      const g=new Map();
+      for(const r of failC){const k=r.fail_reason;if(k==null)continue;g.set(String(k),(g.get(String(k))||0)+1);}
+      let rows=[...g.entries()].map(([k,c])=>({k,c,p:pct(c,totalCurr)})).sort((a,b)=>b.p-a.p).slice(0,5);
+      for(const x of rows) C.push(`  - ${String(x.k).slice(0,80)}：${x.c} 笔（占总量 ${x.p}%）`);
+    } else C.push("  无失败数据");
+  }
+  C.push("");
+
+  const rankTag = compare?"TOP 3（乘积排序，已排除风控拦截）":"TOP 5（影响力排序，已排除风控拦截）";
+  C.push(`三、BIN 国家 ${rankTag}`);
+  if(!tBin || tBin.data.length===0) C.push("  本数据无有效『支付卡BIN国家』（本地支付/钱包等无卡BIN），已跳过该维度分析");
+  else appendDimConclusion(tBin,"支付卡BIN国家",C,compare);
+  C.push("");
+  C.push(`四、金额区间 ${rankTag}`); appendDimConclusion(tAmount,"交易金额区间",C,compare); C.push("");
+  C.push(`五、支付方式 ${rankTag}`); appendDimConclusion(tMethod,"支付方式",C,compare); C.push("");
+
+  C.push("六、需要关注的异常");
+  const an=findAnomalies([[tBin,"支付卡BIN国家"],[tAmount,"交易金额区间"],[tMethod,"支付方式"]],compare);
+  if(an.length) an.forEach(a=>C.push(`  - ${a}`)); else C.push("  未发现显著异常");
+  C.push(""); C.push("");
+}
+
+/* ============================================================
+   完整分析（对应 generate_full_analysis）
+   ============================================================ */
+function generateFullAnalysis(dfCurr, prefix, sheets, C, dfLast){
+  const compare = dfLast != null;
+  const dfCurrEx = excludeRisk(dfCurr);
+  const dfLastEx = compare ? excludeRisk(dfLast) : null;
+
+  sheets.push([`${prefix}_失败原因`, generateFailreasonTable(dfCurr, compare?dfLast:null)]);
+
+  const binAvail = hasDimData(dfCurrEx, "bin_country");
+  const AR = AMOUNT_LABELS;
+  const tBin = binAvail ? generateGroupedTable(dfCurrEx,"bin_country","支付卡BIN国家",compare?dfLastEx:null) : null;
+  const tAmount = generateGroupedTable(dfCurrEx,"amount_range","交易金额区间",compare?dfLastEx:null,AR);
+  const tMethod = generateGroupedTable(dfCurrEx,"payment_method","支付方式",compare?dfLastEx:null);
+
+  if(binAvail) sheets.push([`${prefix}_BIN国家`,tBin]);
+  sheets.push([`${prefix}_金额区间`,tAmount]);
+  sheets.push([`${prefix}_支付方式`,tMethod]);
+
+  if(binAvail){
+    pushDimDim(dfCurrEx,prefix,"bin_country","支付卡BIN国家","BIN","amount_range","交易金额区间","金额",sheets,compare?dfLastEx:null);
+    pushDimDim(dfCurrEx,prefix,"bin_country","支付卡BIN国家","BIN","payment_method","支付方式","方式",sheets,compare?dfLastEx:null);
+  }
+  pushDimDim(dfCurrEx,prefix,"amount_range","交易金额区间","金额","payment_method","支付方式","方式",sheets,compare?dfLastEx:null);
+
+  if(binAvail) pushDimFail(dfCurrEx,prefix,"bin_country","支付卡BIN国家","BIN",tBin,sheets,compare?dfLastEx:null);
+  pushDimFail(dfCurrEx,prefix,"amount_range","交易金额区间","金额",tAmount,sheets,compare?dfLastEx:null);
+  pushDimFail(dfCurrEx,prefix,"payment_method","支付方式","方式",tMethod,sheets,compare?dfLastEx:null);
+
+  generateConclusion(prefix, dfCurr, compare?dfLast:null, tBin, tAmount, tMethod, C);
+}
+
+/* ============================================================
+   百分比格式化（对应 format_percentage）
+   ============================================================ */
+function fmtPctCell(col, val){
+  if((col.includes("占")||col.includes("率")) && val!=="" && val!=null && typeof val==="number" && isFinite(val))
+    return val+"%";
+  return val;
+}
+
+/* ============================================================
+   界面交互
+   ============================================================ */
+let RAW=null, HEADERS=null, CLEAN=null;
+let SHEETS=[], CONCL=[], AISHEET=null;
+
+const $=s=>document.querySelector(s);
+document.getElementById("aiModelLabel").textContent=AI_MODEL;
+document.getElementById("aiUrlLabel").textContent=AI_BASE_URL;
+
+function setMsg(html, cls){ $("#msg").innerHTML = html?`<div class="banner ${cls||''}">${html}</div>`:""; }
+
+// 时间模式切换
+document.querySelectorAll('input[name=tmode]').forEach(el=>el.addEventListener('change',()=>{
+  const c=$('input[name=tmode]:checked').value;
+  $("#compareRange").hidden = c!=="compare";
+  $("#singleRange").hidden = c!=="single";
+}));
+document.querySelectorAll('input[name=srange]').forEach(el=>el.addEventListener('change',()=>{
+  const show=$('input[name=srange]:checked').value==="range";
+  document.querySelectorAll('.s-range-in').forEach(n=>n.hidden=!show);
+}));
+
+// 文件读取
+$("#file").addEventListener("change", e=>{
+  const f=e.target.files[0]; if(!f) return;
+  setMsg("正在读取文件…");
+  const rd=new FileReader();
+  rd.onload=ev=>{
+    try{
+      const wb=XLSX.read(new Uint8Array(ev.target.result),{type:"array",cellDates:true});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const aoa=XLSX.utils.sheet_to_json(ws,{header:1});
+      HEADERS=(aoa[0]||[]).map(h=>String(h));
+      RAW=XLSX.utils.sheet_to_json(ws,{defval:null,raw:true});
+      $("#fileInfo").innerHTML=`已读取 <b>${f.name}</b> · ${RAW.length} 行 · ${HEADERS.length} 列`;
+      const mapped=HEADERS.map(h=>String(h).trim()).filter(h=>COLUMN_MAP[h]);
+      setMsg(`识别到 ${mapped.length} 个已知列：${mapped.map(h=>COLUMN_MAP[h]).join("、")}`, mapped.length?"ok":"warn");
+      $("#run").disabled=false;
+    }catch(err){ setMsg("读取失败："+err.message,"err"); }
+  };
+  rd.readAsArrayBuffer(f);
+});
+
+function parseDay(id, endOfDay){
+  const v=$(id).value; if(!v) return null;
+  const d=new Date(v.replace(/-/g,"/"));
+  if(endOfDay){ d.setHours(23,59,59,999); } else { d.setHours(0,0,0,0); }
+  return isNaN(d)?null:d;
+}
+
+// 计算
+$("#run").addEventListener("click", ()=>{
+  if(!RAW){ setMsg("请先上传数据","warn"); return; }
+  setMsg("正在清洗与分析…");
+  setTimeout(()=>{ try{ runAnalysis(); }catch(err){ console.error(err); setMsg("分析出错："+err.message,"err"); } }, 30);
+});
+
+function runAnalysis(){
+  CLEAN = loadAndClean(RAW, HEADERS);
+  if(CLEAN.length===0){ setMsg("清洗后无有效数据（检查『支付时间』列是否可解析）","err"); return; }
+
+  const tmode=$('input[name=tmode]:checked').value;
+  const site=$('input[name=site]:checked').value;
+  let dfCurr, dfLast=null;
+
+  if(tmode==="compare"){
+    const ls=parseDay("#lStart"),le=parseDay("#lEnd",true),cs=parseDay("#cStart"),ce=parseDay("#cEnd",true);
+    if(!ls||!le||!cs||!ce){ setMsg("对比模式需要填写上期与本期完整日期","warn"); return; }
+    dfLast=CLEAN.filter(r=>r.pay_time>=ls&&r.pay_time<=le);
+    dfCurr=CLEAN.filter(r=>r.pay_time>=cs&&r.pay_time<=ce);
+    if(dfCurr.length===0){ setMsg("本期数据为空，请检查日期范围","warn"); return; }
+  } else {
+    if($('input[name=srange]:checked').value==="range"){
+      const s=parseDay("#sStart"),e=parseDay("#sEnd",true);
+      if(!s||!e){ setMsg("请填写开始与结束日期","warn"); return; }
+      dfCurr=CLEAN.filter(r=>r.pay_time>=s&&r.pay_time<=e);
+    } else dfCurr=CLEAN.slice();
+    if(dfCurr.length===0){ setMsg("数据为空，请检查文件或时间范围","warn"); return; }
+  }
+  const compare = dfLast != null;
+
+  SHEETS=[]; CONCL=[]; AISHEET=null;
+  if(site==="1"||site==="3") generateFullAnalysis(dfCurr,"整体",SHEETS,CONCL,compare?dfLast:null);
+  if(site==="2"||site==="3"){
+    SHEETS.push(["站点概览", generateGroupedTable(excludeRisk(dfCurr),"website","备案网址",compare?excludeRisk(dfLast):null)]);
+    const sites=[...new Set(dfCurr.map(r=>r.website).filter(w=>w!=null&&w!==""))].sort(bySortedKey);
+    for(const s of sites){
+      const sc=dfCurr.filter(r=>r.website===s), sl=compare?dfLast.filter(r=>r.website===s):null;
+      let short=String(s).replace(/https?:\/\//g,"").replace(/\//g,"");
+      if(short.length>15) short=short.slice(0,15);
+      generateFullAnalysis(sc,short,SHEETS,CONCL,compare?sl:null);
+    }
+  }
+
+  render(dfCurr, dfLast, compare);
+  $("#export").disabled=false;
+  $("#aiBtn").disabled=false;
+  setMsg(`分析完成：本期 ${dfCurr.length} 笔${compare?`，上期 ${dfLast.length} 笔`:""}，共生成 ${SHEETS.length} 张表`, "ok");
+}
+
+/* ---- 渲染 ---- */
+function tableHTML(table){
+  if(!table || !table.columns.length) return '<div class="hint" style="padding:10px 16px">（空表）</div>';
+  let h='<div class="tbl-scroll"><table><thead><tr>';
+  for(const c of table.columns) h+=`<th>${esc(c)}</th>`;
+  h+='</tr></thead><tbody>';
+  for(const row of table.data){
+    const cls = row.__total?' class="total"':row.__sep?' class="sep"':'';
+    h+=`<tr${cls}>`;
+    for(const c of table.columns){ let v=fmtPctCell(c,row[c]===undefined?"":row[c]); h+=`<td>${esc(v)}</td>`; }
+    h+='</tr>';
+  }
+  return h+'</tbody></table></div>';
+}
+function esc(v){ return String(v==null?"":v).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
+
+function render(dfCurr, dfLast, compare){
+  const succ=dfCurr.filter(r=>r.status===STATUS_SUCCESS).length;
+  const rate=dfCurr.length>0?r2(succ/dfCurr.length*100):0;
+  const anomalies=CONCL.filter(l=>l.trim().startsWith("- ")).length;
+
+  let html='<div class="kpis">';
+  html+=kpi("总交易量", dfCurr.length.toLocaleString());
+  html+=kpi("整体成功率", rate+"%", rate>=80?"good":rate>=60?"warn":"bad");
+  html+=kpi("成功笔数", succ.toLocaleString(),"good");
+  html+=kpi("失败笔数", (dfCurr.filter(r=>r.status===STATUS_FAIL).length).toLocaleString(),"bad");
+  if(compare) html+=kpi("上期交易量", dfLast.length.toLocaleString());
+  html+='</div>';
+
+  // 结论
+  html+='<h2 class="group">分析结论</h2>';
+  html+=`<pre class="concl">${esc(CONCL.join("\n"))}</pre>`;
+
+  // 所有表，按前缀分组
+  let lastPrefix=null;
+  for(const [name,table] of SHEETS){
+    const prefix=name.includes("_")?name.split("_")[0]:name;
+    if(prefix!==lastPrefix){ html+=`<h2 class="group">${esc(prefix)}</h2>`; lastPrefix=prefix; }
+    const cnt=table.data.filter(r=>!r.__total&&!r.__sep).length;
+    html+=`<details class="sheet"><summary><span>${esc(name)}</span><span class="cnt">${cnt} 行</span></summary>${tableHTML(table)}</details>`;
+  }
+  $("#results").innerHTML=html;
+}
+function kpi(k,v,cls){ return `<div class="kpi ${cls||''}"><div class="k">${k}</div><div class="v">${v}</div></div>`; }
+
+/* ---- 导出 Excel（对应 ExcelWriter，含 分析结论 / AI 总结 sheet） ---- */
+$("#export").addEventListener("click", ()=>{
+  const wb=XLSX.utils.book_new();
+  const used=new Set();
+  const addSheet=(name,aoa)=>{
+    let safe=name.slice(0,31), i=1;
+    while(used.has(safe)){ const suf="_"+(i++); safe=name.slice(0,31-suf.length)+suf; }
+    used.add(safe);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), safe);
+  };
+  if(AISHEET) addSheet("AI智能总结", AISHEET.map(l=>[l]));
+  addSheet("分析结论", CONCL.map(l=>[l]));
+  for(const [name,table] of SHEETS){
+    const aoa=[table.columns];
+    for(const row of table.data) aoa.push(table.columns.map(c=>{ let v=fmtPctCell(c,row[c]===undefined?"":row[c]); return v; }));
+    addSheet(name, aoa);
+  }
+  const ts=new Date().toISOString().slice(0,19).replace(/[-:T]/g,"").replace(/(\d{8})(\d{6})/,"$1_$2");
+  XLSX.writeFile(wb, `商户分析报告_${ts}.xlsx`);
+});
+
+/* ---- AI 总结（对应 call_ai_summary，浏览器 fetch 版） ---- */
+function buildAiPrompt(text){
+  return "你是一名支付风控/商户运营数据分析师。以下是某商户支付数据的规则计算结果"
+    +"（已包含整体概览、失败原因、BIN国家、金额区间、支付方式的排名及异常清单，如涉及多个站点会分别列出）。"
+    +"请基于这些已给出的数字做分析总结，不要编造数据中没有的数字。请输出：\n"
+    +"1. 一段不超过150字的整体健康度判断\n2. 3-5条按优先级排序的问题清单（每条说明问题+可能原因+建议动作）\n"
+    +"3. 如果有多个站点，指出哪个站点相对最需要关注\n请用简体中文，分点作答，不要使用markdown标题符号（#）。\n\n"
+    +"===== 规则计算结果 =====\n"+text+"\n===== 结果结束 =====";
+}
+$("#aiBtn").addEventListener("click", async ()=>{
+  const key=$("#aiKey").value.trim();
+  if(!key){ $("#aiResult").innerHTML='<div class="banner warn">请先填写 API Key</div>'; return; }
+  if(!CONCL.length){ $("#aiResult").innerHTML='<div class="banner warn">请先完成分析</div>'; return; }
+  const btn=$("#aiBtn"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>生成中…';
+  $("#aiResult").innerHTML='<div class="banner">正在调用 '+AI_MODEL+' …</div>';
+  try{
+    const resp=await fetch(AI_BASE_URL.replace(/\/$/,"")+"/chat/completions",{
+      method:"POST",
+      headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
+      body:JSON.stringify({model:AI_MODEL,max_tokens:AI_MAX_TOKENS,stream:false,messages:[
+        {role:"system",content:"你是一名专业、谨慎、只依据给定数据说话的支付数据分析师。"},
+        {role:"user",content:buildAiPrompt(CONCL.join("\n"))}
+      ]})
+    });
+    if(!resp.ok){ throw new Error("接口返回 "+resp.status+"："+(await resp.text()).slice(0,300)); }
+    const data=await resp.json();
+    const content=data?.choices?.[0]?.message?.content?.trim();
+    if(!content) throw new Error("返回格式异常");
+    AISHEET=content.split("\n");
+    $("#aiResult").innerHTML='<div class="banner ok">AI 总结生成成功（已并入导出 Excel）</div><pre class="concl">'+esc(content)+'</pre>';
+  }catch(err){
+    let hint="";
+    if(String(err).includes("Failed to fetch")) hint="（多为浏览器 CORS 限制：第三方 AI 接口未允许网页直连。可改用带后端中转的方案，或先使用规则结论。）";
+    $("#aiResult").innerHTML='<div class="banner err">AI 总结失败：'+esc(err.message||String(err))+' '+hint+'</div>';
+  } finally { btn.disabled=false; btn.textContent="生成 AI 总结"; }
+});
+</script>
