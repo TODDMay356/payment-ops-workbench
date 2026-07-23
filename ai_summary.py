@@ -5,15 +5,17 @@ AI 总结（本地 / 服务器端运行，无浏览器 CORS 问题）
 ====================================================
 配合网页「复制 AI 提示词」按钮使用，分工：网页做分析，Python 做 AI 总结。
 
-用法（三选一）：
-  1) 网页点「复制 AI 提示词」→ 粘到一个文件 prompt.txt → 运行：
-        python ai_summary.py prompt.txt
-  2) 直接吃剪贴板（macOS 举例）：
-        pbpaste | python ai_summary.py
-        # Windows PowerShell:  Get-Clipboard | python ai_summary.py
-        # Linux:               xclip -o -sel clip | python ai_summary.py
-  3) 直接运行后手动粘贴，粘完按 Ctrl-D（Windows 为 Ctrl-Z 回车）结束：
+用法（最省事的排在前面）：
+  1) 网页点「下载提示词」得到 payment_prompt.txt，和本脚本放同一目录，直接运行：
         python ai_summary.py
+     （不给参数时自动读取当前目录的 payment_prompt.txt / prompt.txt）
+  2) 指定任意提示词文件：
+        python ai_summary.py 某个文件.txt
+  3) 吃剪贴板（网页点「复制提示词」后）：
+        pbpaste | python ai_summary.py                 # macOS
+        Get-Clipboard | python ai_summary.py           # Windows PowerShell
+        xclip -o -sel clip | python ai_summary.py       # Linux
+  4) 直接运行后手动粘贴，粘完按 Ctrl-D（Windows 为 Ctrl-Z 回车）结束。
 
 结果会打印到屏幕，并写入 ai_summary.txt（再贴回网页或直接用都行）。
 
@@ -42,8 +44,11 @@ SYSTEM_PROMPT = "你是一名专业、谨慎、只依据给定数据说话的支
 OUTPUT_FILE = "ai_summary.txt"
 
 
+DEFAULT_PROMPT_FILES = ["payment_prompt.txt", "prompt.txt"]
+
+
 def read_prompt() -> str:
-    """从 命令行文件参数 / 管道 / 手动粘贴 三种方式读取提示词。"""
+    """从 命令行文件参数 / 当前目录默认文件 / 管道 / 手动粘贴 读取提示词。"""
     if len(sys.argv) > 1:
         path = sys.argv[1]
         if not os.path.exists(path):
@@ -52,7 +57,14 @@ def read_prompt() -> str:
             return f.read()
     if not sys.stdin.isatty():          # 有管道输入
         return sys.stdin.read()
-    print("请粘贴网页复制的 AI 提示词，粘完后按 Ctrl-D（Windows 为 Ctrl-Z 回车）结束：")
+    # 无参数、非管道：自动找当前目录的默认提示词文件（配合网页「下载提示词」）
+    for name in DEFAULT_PROMPT_FILES:
+        if os.path.exists(name):
+            print(f"已自动读取当前目录的 {name}", file=sys.stderr)
+            with open(name, "r", encoding="utf-8") as f:
+                return f.read()
+    print("未找到 payment_prompt.txt，请粘贴网页复制的提示词，"
+          "粘完后按 Ctrl-D（Windows 为 Ctrl-Z 回车）结束：")
     return sys.stdin.read()
 
 
