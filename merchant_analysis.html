@@ -231,6 +231,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   @keyframes sp{to{transform:rotate(360deg)}}
   .ai-box{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:8px}
   input[type=password]{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:inherit;font:inherit}
+  #aiManual textarea{display:block;width:100%;min-height:70px;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:inherit;font:12px/1.5 ui-monospace,Menlo,monospace;resize:vertical}
+  #aiPromptOut{min-height:54px;color:var(--ink-2)}
 
 </style>
 <div class="wrap">
@@ -324,11 +326,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     <details class="card report" id="report" style="margin-top:16px">
       <summary><span>详细报表（全部维度 / 交叉 / 帕累托表格）</span><span class="cnt" id="reportCnt"></span></summary>
       <div class="report-body">
-        <div class="ai-box" style="margin:0 0 14px">
+        <div class="ai-box" style="margin:0 0 10px">
           <button class="btn" id="export">导出 Excel</button>
-          <input type="password" id="aiKey" placeholder="AI Key（可选，临时填写，不保存）" style="flex:1;min-width:220px">
-          <button class="btn ghost" id="aiBtn">生成 AI 总结</button>
+          <button class="btn ghost" id="aiCopy" title="复制拼好的完整提示词，粘到任意大模型">复制 AI 提示词</button>
+          <input type="password" id="aiKey" placeholder="AI Key（直连用，可选，不保存）" style="flex:1;min-width:180px">
+          <input type="text" id="aiUrl" placeholder="接口地址（默认 DeepSeek，可填自建代理）" style="flex:1;min-width:200px">
+          <button class="btn ghost" id="aiBtn">直连生成</button>
         </div>
+        <details id="aiManual" style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--ink-2)">直连被 CORS 拦截？点这里手动跑（复制提示词 → 粘到任意大模型 → 把回答粘回来）</summary>
+          <textarea id="aiPromptOut" readonly placeholder="点上方「复制 AI 提示词」后，完整提示词会显示在这里，可手动复制" ></textarea>
+          <textarea id="aiPaste" placeholder="把大模型的回答粘贴到这里"></textarea>
+          <button class="btn" id="aiApply">应用粘贴的总结</button>
+        </details>
         <div id="aiResult"></div>
         <div id="reportTables"></div>
       </div>
@@ -631,7 +641,7 @@ function generateGroupedTable(dfCurr, groupCol, groupLabel, dfLast, categories){
     const overall = totalCurr>0 ? sumSucc/totalCurr*100 : 0;
     let rows = g.map(x=>{
       const p=pct(x.n,totalCurr), rate=pct(x.succ,x.n);
-      return {key:x.key,n:x.n,succ:x.succ,p,rate,impact:r4(p/100*(overall-rate))};
+      return {key:x.key,n:x.n,succ:x.succ,p,rate,impact:r4(p/100*(rate-overall))};
     });
     rows.sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact));
     const data = rows.map(x=>({[groupLabel]:x.key,"交易笔数":x.n,"占比":x.p,"成功笔数":x.succ,"通过率":x.rate,"影响力":x.impact}));
@@ -699,7 +709,7 @@ function generateCrossTable(dfCurr, colA, labelA, colB, labelB, dfLast){
   } else {
     const g=[...crossAgg(dfCurr,colA,colB).values()].filter(x=>x.n>0);
     const sumSucc=g.reduce((s,x)=>s+x.succ,0), overall=totalCurr>0?sumSucc/totalCurr*100:0;
-    let rows=g.map(x=>{const p=pct(x.n,totalCurr),rate=pct(x.succ,x.n);return {...x,p,rate,impact:r4(p/100*(overall-rate))};});
+    let rows=g.map(x=>{const p=pct(x.n,totalCurr),rate=pct(x.succ,x.n);return {...x,p,rate,impact:r4(p/100*(rate-overall))};});
     rows.sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact));
     const data=rows.map(x=>({[labelA]:x.a,[labelB]:x.b,"交易笔数":x.n,"占比":x.p,"成功笔数":x.succ,"通过率":x.rate,"影响力":x.impact}));
     const tot=Object.fromEntries(cols.map(c=>[c,""])); tot[labelA]="合计"; tot.__total=true;
@@ -1075,6 +1085,8 @@ function initControls(clean){
     $("#report").addEventListener("toggle",()=>{ if($("#report").open) buildReport(); });
     $("#export").addEventListener("click",exportExcel);
     $("#aiBtn").addEventListener("click",runAI);
+    $("#aiCopy").addEventListener("click",copyPrompt);
+    $("#aiApply").addEventListener("click",applyPasted);
   }
 }
 
@@ -1150,7 +1162,7 @@ function groupMetric(rows,col,categories){
   const totW=keys.reduce((s,k)=>s+W(k),0), sumS=keys.reduce((s,k)=>s+SW(k),0);
   const overall=totW>0?r2(sumS/totW*100):0;
   const out=keys.map(k=>{const e=m.get(k),w=W(k),sw=SW(k);const rate=w>0?r2(sw/w*100):0,share=totW>0?r2(w/totW*100):0;
-    return {v:k,n:e.n,succ:e.succ,amt:e.amt,succAmt:e.sA,weight:w,share,rate,impact:r4(share/100*(overall-rate))};});
+    return {v:k,n:e.n,succ:e.succ,amt:e.amt,succAmt:e.sA,weight:w,share,rate,impact:r4(share/100*(rate-overall))};});
   return {rows:out,overall};
 }
 
@@ -1211,7 +1223,7 @@ function renderCharts(view){
 /* 成功率 by 维度：横向条形 + 整体基准线；整行可点（含 0% 也能点中） */
 function dimBarCard(gm,label,col){
   const overall=gm.overall;
-  let rows=gm.rows.slice().sort((a,b)=>b.impact-a.impact);
+  let rows=gm.rows.slice().sort((a,b)=>a.impact-b.impact); // 负=拖累最大在上
   if(rows.length>12) rows=rows.slice(0,12);
   const c=card("col-4",`<div class="chart-head"><span class="t">${isAmt()?'金额成功率':'成功率'} · ${esc(label)}</span><span class="s">整体 ${overall}%</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
@@ -1289,7 +1301,7 @@ function impactCard(view,gmBin,gmAmt,gmMet,binAvail){
   if(binAvail) push(gmBin,"bin_country");
   push(gmAmt,"amount_range"); push(gmMet,"payment_method");
   items=items.filter(x=>isFinite(x.impact)&&x.impact!==0).sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact)).slice(0,12);
-  const c=card("col-6",`<div class="chart-head"><span class="t">谁在拖累整体${isAmt()?'金额':''}成功率（影响力）</span><span class="s">正=拖累 · 负=拉升</span></div>`);
+  const c=card("col-6",`<div class="chart-head"><span class="t">各项对整体${isAmt()?'金额':''}成功率的影响力</span><span class="s">正=提高（蓝） · 负=拖累（红）</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
   if(items.length===0){body.innerHTML='<div class="empty">无数据</div>';return;}
   const maxA=Math.max(...items.map(x=>Math.abs(x.impact)))||1;
@@ -1298,19 +1310,19 @@ function impactCard(view,gmBin,gmAmt,gmMet,binAvail){
   const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
   svg.appendChild(E("line",{x1:cx,y1:padT-2,x2:cx,y2:H-padB+2,class:"axis"}));
   items.forEach((r,i)=>{
-    const y=padT+i*rowH, w=Math.abs(r.impact)/maxA*(plotW/2), drag=r.impact>0, x=drag?cx:cx-w;
+    const y=padT+i*rowH, w=Math.abs(r.impact)/maxA*(plotW/2), lift=r.impact>0, x=lift?cx:cx-w;
     const active=state.filters.some(f=>f.col===r.col&&f.value===r.v);
     if(active) svg.appendChild(E("rect",{x:0,y:y+1,width:W,height:rowH-2,rx:4,fill:"var(--series-soft)",opacity:.5}));
     svg.appendChild(E("text",{x:8,y:y+rowH/2,"dominant-baseline":"middle",class:"lab"},trunc(r.dim+"·"+(r.v===""?"空":r.v),16)));
-    svg.appendChild(E("rect",{x,y:y+4,width:Math.max(w,1),height:rowH-10,rx:3,fill:drag?"var(--drag)":"var(--lift)",class:"bar"}));
-    svg.appendChild(E("text",{x:drag?x+w+5:x-5,y:y+rowH/2,"text-anchor":drag?"start":"end","dominant-baseline":"middle",class:"val"},r.impact));
+    svg.appendChild(E("rect",{x,y:y+4,width:Math.max(w,1),height:rowH-10,rx:3,fill:lift?"var(--lift)":"var(--drag)",class:"bar"}));
+    svg.appendChild(E("text",{x:lift?x+w+5:x-5,y:y+rowH/2,"text-anchor":lift?"start":"end","dominant-baseline":"middle",class:"val"},r.impact));
     const hit=E("rect",{x:0,y,width:W,height:rowH,class:"hit"});
     hit.addEventListener("click",()=>toggleFilter(r.col,r.dim,r.v));
-    bindTip(hit,()=>`<b>${esc(r.dim)}·${esc(r.v===""?"空":r.v)}</b>${tipRows([[isAmt()?"金额成功率":"通过率",r.rate+"%"],["占比",r.share+"%"],["影响力",r.impact],["含义",drag?"拖累整体":"拉升整体"]])}<div class="r" style="margin-top:4px;color:#bbb">点击整行=筛选此项</div>`);
+    bindTip(hit,()=>`<b>${esc(r.dim)}·${esc(r.v===""?"空":r.v)}</b>${tipRows([[isAmt()?"金额成功率":"通过率",r.rate+"%"],["占比",r.share+"%"],["影响力",r.impact],["含义",lift?"提高整体":"拖累整体"]])}<div class="r" style="margin-top:4px;color:#bbb">点击整行=筛选此项</div>`);
     svg.appendChild(hit);
   });
   body.appendChild(svg);
-  c.insertAdjacentHTML("beforeend",`<div class="legend"><span><i style="background:var(--drag)"></i>拖累</span><span><i style="background:var(--lift)"></i>拉升</span></div>`);
+  c.insertAdjacentHTML("beforeend",`<div class="legend"><span><i style="background:var(--lift)"></i>提高（通过率高于整体）</span><span><i style="background:var(--drag)"></i>拖累（低于整体）</span></div>`);
 }
 
 /* 成功率趋势 · 按天（口径感知）：柱=当日量，线=成功率 */
@@ -1531,10 +1543,11 @@ async function runAI(){
   if(!REPORT_SHEETS.length) buildReport();
   if(!REPORT_CONCL.length){ $("#aiResult").innerHTML='<div class="banner warn">当前无可分析的结论</div>'; return; }
   const btn=$("#aiBtn"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>生成中…';
-  $("#aiResult").innerHTML='<div class="banner">正在调用 '+AI_MODEL+' …</div>';
+  const base=($("#aiUrl").value.trim()||AI_BASE_URL).replace(/\/$/,"");
+  $("#aiResult").innerHTML='<div class="banner">正在直连 '+esc(base)+' …</div>';
   const prompt=buildAIPrompt();
   try{
-    const resp=await fetch(AI_BASE_URL.replace(/\/$/,"")+"/chat/completions",{method:"POST",
+    const resp=await fetch(base+"/chat/completions",{method:"POST",
       headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
       body:JSON.stringify({model:AI_MODEL,max_tokens:AI_MAX_TOKENS,stream:false,messages:[
         {role:"system",content:"你是一名专业、谨慎、只依据给定数据说话的支付数据分析师。"},{role:"user",content:prompt}]})});
@@ -1544,9 +1557,29 @@ async function runAI(){
     AISHEET=content.split("\n");
     $("#aiResult").innerHTML='<div class="banner ok">AI 总结已生成（导出 Excel 会一并包含）</div><pre class="concl">'+esc(content)+'</pre>';
   }catch(err){
-    const cors=String(err).includes("Failed to fetch")?"（多为浏览器 CORS 限制：第三方接口不允许网页直连。规则图表与报表不受影响。）":"";
-    $("#aiResult").innerHTML='<div class="banner err">AI 总结失败：'+esc(err.message||String(err))+' '+cors+'</div>';
-  }finally{ btn.disabled=false; btn.textContent="生成 AI 总结"; }
+    if(String(err).includes("Failed to fetch")){
+      $("#aiManual").open=true; $("#aiPromptOut").value=prompt;
+      $("#aiResult").innerHTML='<div class="banner warn">直连被拦截（浏览器 CORS：该接口不允许网页直连，离线 file:// 尤其如此）。已为你打开下方「手动跑」：<b>复制提示词</b> → 粘到任意大模型（DeepSeek 网页/ChatGPT/豆包…）→ 把回答粘回来即可。规则图表与报表不受影响。</div>';
+    } else {
+      $("#aiResult").innerHTML='<div class="banner err">AI 总结失败：'+esc(err.message||String(err))+'</div>';
+    }
+  }finally{ btn.disabled=false; btn.textContent="直连生成"; }
+}
+function ensureReport(){ if(!REPORT_SHEETS.length) buildReport(); return REPORT_CONCL.length>0; }
+async function copyPrompt(){
+  if(!ensureReport()){ $("#aiResult").innerHTML='<div class="banner warn">当前无可分析的数据（先上传流水/调整筛选）</div>'; return; }
+  const prompt=buildAIPrompt();
+  $("#aiManual").open=true; $("#aiPromptOut").value=prompt; $("#aiPromptOut").select();
+  let ok=false;
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ await navigator.clipboard.writeText(prompt); ok=true; } }catch(e){}
+  if(!ok){ try{ ok=document.execCommand("copy"); }catch(e){} }
+  $("#aiResult").innerHTML='<div class="banner '+(ok?'ok':'warn')+'">'+(ok?'提示词已复制到剪贴板':'请在下方框中手动全选复制')+'：粘到任意大模型 → 把回答粘回下方「回答」框 → 点「应用粘贴的总结」。</div>';
+}
+function applyPasted(){
+  const v=$("#aiPaste").value.trim();
+  if(!v){ $("#aiResult").innerHTML='<div class="banner warn">请先把大模型的回答粘贴到下方框</div>'; return; }
+  AISHEET=v.split("\n");
+  $("#aiResult").innerHTML='<div class="banner ok">已应用粘贴的 AI 总结（导出 Excel 会一并包含）</div><pre class="concl">'+esc(v)+'</pre>';
 }
 
 /* ============================================================
