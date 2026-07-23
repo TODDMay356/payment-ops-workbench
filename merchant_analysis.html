@@ -85,6 +85,27 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .drop{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   .drop input[type=file]{font:inherit}
   .hint{font-size:12px;color:var(--muted)}
+  .up-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.up-grid{grid-template-columns:1fr}}
+  .up-cell{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--surface-2);display:flex;flex-direction:column;gap:8px}
+  .up-t{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .up-tag{font-size:11px;font-weight:600;color:var(--brand-ink);background:var(--brand-soft);border-radius:999px;padding:2px 9px}
+  .up-cell input[type=file]{font:inherit}
+
+  /* 漏斗优先级 callout */
+  .prio{display:flex;gap:14px;align-items:flex-start;border-radius:12px;padding:13px 16px;margin:6px 0 14px;
+    background:linear-gradient(0deg,var(--surface),var(--surface)) padding-box,var(--surface);
+    border:1px solid var(--line);border-left:4px solid var(--critical)}
+  .prio.ok{border-left-color:var(--good)}
+  .prio .big{font-size:15px;font-weight:700}
+  .prio .lead{font-size:12px;color:var(--muted);margin-bottom:3px;letter-spacing:.02em}
+  .prio .why{font-size:12.5px;color:var(--ink-2);margin-top:4px;line-height:1.5}
+  .prio .pill{display:inline-block;font-size:12px;font-weight:700;color:#fff;background:var(--critical);border-radius:7px;padding:2px 9px;margin-left:2px}
+  .fstage{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .fstage>summary{cursor:pointer;list-style:none;padding:10px 13px;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .fstage>summary::-webkit-details-marker{display:none}
+  .fstage>summary .rt{font-variant-numeric:tabular-nums}
+  .fstage .body{padding:2px 13px 12px}
 
   /* control bar */
   .controls{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--surface) 92%,transparent);
@@ -211,11 +232,33 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   <!-- upload -->
   <div class="card pad" style="margin-bottom:14px">
-    <div class="drop">
-      <input type="file" id="file" accept=".xlsx,.xls">
-      <span class="hint" id="fileInfo">支持 .xlsx / .xls，读取第一个工作表；列名按 COLUMN_MAP 自动识别。</span>
+    <div class="up-grid">
+      <div class="up-cell">
+        <div class="up-t">① 支付转化率数据 <span class="up-tag">优先 · 定位问题环节</span></div>
+        <input type="file" id="fileConv" accept=".xlsx,.xls">
+        <span class="hint" id="convInfo">漏斗格式（业务单支付成功率 = 环节1×2×3×4 拆解）。</span>
+      </div>
+      <div class="up-cell">
+        <div class="up-t">② 支付流水明细数据</div>
+        <input type="file" id="file" accept=".xlsx,.xls">
+        <span class="hint" id="fileInfo">逐笔流水，用于失败原因、维度与交叉下钻。</span>
+      </div>
     </div>
     <div id="loadMsg"></div>
+  </div>
+
+  <!-- 转化漏斗（优先，独立于流水数据） -->
+  <div class="card pad" id="funnelSection" hidden style="margin-bottom:14px">
+    <div class="topbar" style="margin-bottom:6px">
+      <div>
+        <div style="font-size:16px;font-weight:700">支付转化漏斗 · 先定位问题环节</div>
+        <p class="sub" id="funnelMeta" style="margin-top:3px"></p>
+      </div>
+      <select id="funnelRow" hidden></select>
+    </div>
+    <div id="funnelPriority"></div>
+    <div id="funnelChart"></div>
+    <div class="grid" id="funnelStages" style="margin-top:12px"></div>
   </div>
 
   <!-- results (hidden until data) -->
@@ -1362,7 +1405,10 @@ function buildAIPrompt(){
   add("交易金额区间通过率",find("_金额区间"),12);
   add("卡BIN国家通过率",find("_BIN国家"),20);
   add("支付方式×失败原因（交叉归因用）",find("_方式x失败_全量"),40);
-  return AI_OUTLINE+"\n\n===== 规则计算结论 =====\n"+REPORT_CONCL.join("\n")+
+  const funnel=(typeof funnelSummaryText==="function")?funnelSummaryText():"";
+  const head=AI_OUTLINE+(funnel?"\n\n【特别要求】本商户提供了支付转化漏斗数据。请务必先依据漏斗指出流失最大的业务环节（哪一环最该优先排查），再结合下方交易明细做原因归因；两者要对应起来（例如漏斗指向网关/3DS 环节时，用失败原因表里的 3DS/网关/风控 数据佐证）。":"");
+  const funnelBlock=funnel?("\n\n===== 支付转化漏斗（优先定位环节） =====\n"+funnel):"";
+  return head+funnelBlock+"\n\n===== 规则计算结论 =====\n"+REPORT_CONCL.join("\n")+
     "\n\n===== 关键明细表 =====\n"+parts.join("\n\n")+"\n===== 数据结束 =====";
 }
 
@@ -1388,6 +1434,204 @@ async function runAI(){
     const cors=String(err).includes("Failed to fetch")?"（多为浏览器 CORS 限制：第三方接口不允许网页直连。规则图表与报表不受影响。）":"";
     $("#aiResult").innerHTML='<div class="banner err">AI 总结失败：'+esc(err.message||String(err))+' '+cors+'</div>';
   }finally{ btn.disabled=false; btn.textContent="生成 AI 总结"; }
+}
+
+/* ============================================================
+   支付转化漏斗模块（优先定位问题环节）
+   数据为乘法漏斗：业务单支付成功率 = 环节1 × 环节2 × 环节3 × 环节4
+   ============================================================ */
+const FUNNEL_MAIN=[
+  {code:"1",label:"业务单支付转化率"},
+  {code:"2",label:"业务校验通过率"},
+  {code:"3",label:"网关提交率"},
+  {code:"4",label:"网关通过率"},
+];
+const FUNNEL_DESC={
+  "1":"独立站下单 → 校验1（shipping / invoice / 国家 / 邮箱 / 电话 / 币种 / billing 信息校验）→ 收银台加载 → 点击 Pay Now",
+  "2":"校验2（卡号有效性与 CVV、支付频率限制、备案网址校验、支付币种范围、通道+方式+币种 路由判断）",
+  "3":"政策 3DS 判断 → 校验3 风控（风控策略、黑名单 邮箱/电话/IP/卡号、Forter）→ 校验4（camel 商户号最小金额限制）→ 3DS 验证 → 提交网关",
+  "4":"PSP 系统最终支付结果（支付成功 / 失败 / 无结果）",
+};
+const FUNNEL_SUBS={
+  "1":[["1.1","校验1通过率",0],["1.2","Paynow点击率",0]],
+  "2":[],
+  "3":[["3.1","风控综合通过率",0],["3.1.1","风控-通过",1],["3.1.2","风控-3DS",1],
+       ["3.2","3DS交易占比",0],["3.2.1","风控3DS交易占比",1],["3.2.2","政策3DS交易占比",1],
+       ["3.3","3DS通过率",0],["3.3.1","风控3DS通过率",1],["3.3.2","政策3DS通过率",1]],
+  "4":[["4.1","非3DS网关通过率",0],["4.2","3DS网关通过率",0],
+       ["4.2.1","风控3DS网关通过率",1],["4.2.2","政策3DS网关通过率",1]],
+};
+const pctD=v=>(v==null||isNaN(v))?"—":(r2(v*100)+"%");
+
+function parseFunnelCode(h){
+  if(h.includes("业务单支付成功率")) return "overall";
+  if(h.includes("支付单支付成功率")) return "payorder";
+  const tok=(h.split(/\s+/)[0]||"").replace(/[．.。]$/,"");
+  return tok;
+}
+function loadFunnel(aoa){
+  const h0=(aoa[0]||[]).map(x=>String(x==null?"":x).trim());
+  const h1=(aoa[1]||[]).map(x=>String(x==null?"":x).trim());
+  const metricCols=[], idCols=[];
+  for(let j=0;j<h0.length;j++){
+    if(h0[j]===""||h0[j]==="类型") idCols.push({j,name:h1[j]||("列"+j)});
+    else metricCols.push({j,code:parseFunnelCode(h0[j]),label:h0[j]});
+  }
+  const rows=[];
+  for(let i=2;i<aoa.length;i++){
+    const r=aoa[i]; if(!r||r.every(c=>c==null||c==="")) continue;
+    const id={}; idCols.forEach(c=>id[c.name]=r[c.j]);
+    const m={}; metricCols.forEach(c=>{const v=r[c.j];m[c.code]=(v==null||v==="")?null:(typeof v==="number"?v:parseFloat(String(v).replace("%","")) / (String(v).includes("%")?100:1));});
+    let d=id["统计日期"]; d=d instanceof Date?d:(d?new Date(String(d).replace(/-/g,"/")):null);
+    rows.push({id,m,date:isNaN(d)?null:d,po:+(id["PO单数"]||id["PO单量"]||id["PO单量数"]||0)||0});
+  }
+  return {metricCols,idCols,rows};
+}
+
+/* ---- 文件读取 ---- */
+$("#fileConv").addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f) return;
+  $("#loadMsg").innerHTML='<div class="banner">正在读取转化率数据…</div>';
+  const rd=new FileReader();
+  rd.onload=ev=>{
+    try{
+      const wb=XLSX.read(new Uint8Array(ev.target.result),{type:"array",cellDates:true});
+      const aoa=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+      const fn=loadFunnel(aoa);
+      const ok=fn.metricCols.some(c=>c.code==="3")&&fn.metricCols.some(c=>c.code==="4")&&fn.rows.length>0;
+      if(!ok){ $("#loadMsg").innerHTML='<div class="banner warn">这份文件不像转化漏斗数据（未找到环节1-4的列）。请确认表头含「1. 业务单支付转化率 … 4. 网关通过率」等列。</div>'; return; }
+      state.funnel=fn; state.funnelIdx=0;
+      // 默认选最新日期那一行
+      fn.rows.forEach((r,i)=>{ if(r.date&&fn.rows[state.funnelIdx].date&&r.date>fn.rows[state.funnelIdx].date) state.funnelIdx=i; });
+      $("#convInfo").innerHTML=`已读取 <b>${esc(f.name)}</b> · ${fn.rows.length} 行`;
+      $("#loadMsg").innerHTML="";
+      buildFunnelSelector();
+      $("#funnelSection").hidden=false;
+      renderFunnel();
+      $("#funnelSection").scrollIntoView({behavior:"smooth",block:"start"});
+    }catch(err){ console.error(err); $("#loadMsg").innerHTML='<div class="banner err">转化率数据读取失败：'+esc(err.message)+'</div>'; }
+  };
+  rd.readAsArrayBuffer(f);
+});
+
+function funnelRowLabel(r){
+  const p=[]; if(r.id["统计日期"]) p.push(r.date?fmtInput(r.date):String(r.id["统计日期"]));
+  if(r.id["时间类别"]) p.push(String(r.id["时间类别"]));
+  if(r.id["来源"]) p.push(String(r.id["来源"]));
+  if(r.id["站点"]) p.push(String(r.id["站点"]));
+  return (p.join(" · ")||"数据")+(r.po?`（PO ${r.po}）`:"");
+}
+function buildFunnelSelector(){
+  const rows=state.funnel.rows, sel=$("#funnelRow");
+  if(rows.length<=1){ sel.hidden=true; return; }
+  sel.hidden=false;
+  sel.innerHTML=rows.map((r,i)=>`<option value="${i}" ${i===state.funnelIdx?"selected":""}>${esc(funnelRowLabel(r))}</option>`).join("");
+  if(!buildFunnelSelector._b){ buildFunnelSelector._b=true; sel.addEventListener("change",()=>{state.funnelIdx=+sel.value;renderFunnel();}); }
+}
+
+/* ---- 计算：累计转化 + 各环节流失 ---- */
+function funnelStages(row){
+  const m=row.m; let cum=1; const out=[];
+  for(const s of FUNNEL_MAIN){
+    const rate=m[s.code];
+    const before=cum;
+    const rt=(rate==null||isNaN(rate))?null:rate;
+    const after=(rt==null)?before:before*rt;
+    out.push({code:s.code,label:s.label,rate:rt,before,after,loss:before-after});
+    cum=after;
+  }
+  const overall=(m["overall"]!=null&&!isNaN(m["overall"]))?m["overall"]:cum;
+  return {stages:out,overall,payorder:m["payorder"],cumEnd:cum};
+}
+
+/* ---- 渲染 ---- */
+function renderFunnel(){
+  const row=state.funnel.rows[state.funnelIdx];
+  const {stages,overall,payorder}=funnelStages(row);
+  const name=row.id["商户名称"]?String(row.id["商户名称"]):"";
+  $("#funnelMeta").innerHTML=`${esc(name)} · ${esc(funnelRowLabel(row))} · 业务单支付成功率 <b>${pctD(overall)}</b>${payorder!=null?` · 支付单支付成功率 <b>${pctD(payorder)}</b>`:""}`;
+
+  // 优先级：按累计流失最大的环节
+  const valid=stages.filter(s=>s.rate!=null);
+  const worst=valid.slice().sort((a,b)=>b.loss-a.loss)[0];
+  const totalLoss=1-overall;
+  if(worst&&worst.loss>1e-9){
+    const shareOfLoss=totalLoss>0?r2(worst.loss/totalLoss*100):0;
+    const gwHint=(worst.code==="3"||worst.code==="4")?"，可结合下方交易明细的失败原因（3DS 验证 / 网关拒付 / 风控）进一步归因":"";
+    $("#funnelPriority").innerHTML=`<div class="prio">
+      <div style="font-size:22px">🎯</div>
+      <div><div class="lead">最需优先排查的环节</div>
+        <div class="big">${esc(worst.label)}（环节${worst.code}）<span class="pill">当期通过率 ${pctD(worst.rate)}</span></div>
+        <div class="why">该环节造成约 <b>${r2(worst.loss*100)} 个百分点</b> 的转化流失，占全部流失的 <b>${shareOfLoss}%</b>${gwHint}。</div>
+      </div></div>`;
+  } else {
+    $("#funnelPriority").innerHTML=`<div class="prio ok"><div style="font-size:22px">✅</div><div><div class="lead">转化漏斗</div><div class="big">各环节通过率均较高，未见明显瓶颈</div></div></div>`;
+  }
+
+  drawFunnel($("#funnelChart"),stages,overall,worst);
+
+  // 每环节子指标下钻
+  const host=$("#funnelStages"); host.innerHTML="";
+  for(const s of stages){
+    const subs=FUNNEL_SUBS[s.code]||[];
+    const isWorst=worst&&worst.code===s.code;
+    const col=document.createElement("div"); col.className="col-6";
+    let inner=`<details class="fstage" ${isWorst?"open":""}><summary><span>${isWorst?"⚠ ":""}环节${s.code} · ${esc(s.label)}</span><span class="rt">${pctD(s.rate)}</span></summary>`;
+    const desc=FUNNEL_DESC[s.code]?`<div class="hint" style="padding:6px 13px 2px;line-height:1.5">${esc(FUNNEL_DESC[s.code])}</div>`:"";
+    if(subs.length){
+      inner+=desc+`<div class="body"><table class="mini-tbl"><tbody>`+
+        subs.map(([code,label,ind])=>{const v=row.m[code];const bad=(v!=null&&v<0.5&&ind===0);
+          return `<tr><td style="padding-left:${9+ind*18}px;${ind?'color:var(--muted)':''}">${esc(label)}</td><td class="tabnums" style="${bad?'color:var(--critical);font-weight:700':''}">${pctD(v)}</td></tr>`;}).join("")+
+        `</tbody></table></div>`;
+    } else {
+      inner+=desc+`<div class="body"><div class="hint">该环节无更细拆解。</div></div>`;
+    }
+    inner+=`</details>`; col.innerHTML=inner; host.appendChild(col);
+  }
+}
+
+function drawFunnel(host,stages,overall,worst){
+  host.innerHTML="";
+  const steps=[{label:"进入支付",cum:1,drop:0,code:null}];
+  stages.forEach(s=>steps.push({label:"环节"+s.code+" "+s.label,cum:s.after,drop:s.loss,rate:s.rate,code:s.code}));
+  const W=Math.max(host.clientWidth||900,520), padL=170, RR=140, rowH=34, padT=6, padB=6;
+  const plotW=W-padL-RR, H=padT+steps.length*rowH+padB;
+  const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
+  steps.forEach((st,i)=>{
+    const y=padT+i*rowH, w=Math.max(st.cum*plotW,1);
+    const isWorst=worst&&st.code===worst.code;
+    svg.appendChild(E("text",{x:padL-8,y:y+rowH/2,"text-anchor":"end","dominant-baseline":"middle",class:"lab"},trunc(st.label,16)));
+    // 轨道
+    svg.appendChild(E("rect",{x:padL,y:y+5,width:plotW,height:rowH-13,rx:3,fill:"var(--surface-2)"}));
+    const fill=i===0?"var(--series)":(isWorst?"var(--critical)":(st.rate>=0.9?"var(--series)":st.rate>=0.7?"var(--serious)":"var(--critical)"));
+    const bar=E("rect",{x:padL,y:y+5,width:w,height:rowH-13,rx:3,fill,class:"bar"});
+    svg.appendChild(bar);
+    svg.appendChild(E("text",{x:padL+w+6,y:y+rowH/2,"dominant-baseline":"middle",class:"val"},r2(st.cum*100)+"%"));
+    if(i>0&&st.drop>1e-9) svg.appendChild(E("text",{x:W-4,y:y+rowH/2,"text-anchor":"end","dominant-baseline":"middle",class:"lab sm",fill:isWorst?"var(--critical)":"var(--muted)"},`本环节 ${pctD(st.rate)} · 流失 -${r2(st.drop*100)}pt`));
+    if(st.code!=null) bindTip(bar,()=>`<b>${esc(st.label)}</b>${tipRows([["本环节通过率",pctD(st.rate)],["累计转化",r2(st.cum*100)+"%"],["本环节流失",r2(st.drop*100)+" pt"]])}`);
+  });
+  host.appendChild(svg);
+  host.insertAdjacentHTML("beforeend",`<div class="legend"><span>条形长度 = 累计转化率（逐环节相乘收窄）</span><span><i style="background:var(--critical)"></i>流失最大环节</span></div>`);
+}
+
+/* ---- 供 AI 提示词使用 ---- */
+function funnelSummaryText(){
+  if(!state.funnel||state.funnelIdx==null) return "";
+  const row=state.funnel.rows[state.funnelIdx];
+  const {stages,overall,payorder}=funnelStages(row);
+  const valid=stages.filter(s=>s.rate!=null);
+  const worst=valid.slice().sort((a,b)=>b.loss-a.loss)[0];
+  const L=[];
+  L.push("（乘法漏斗：业务单支付成功率 = 环节1×2×3×4）");
+  L.push(`整体 业务单支付成功率 ${pctD(overall)}` + (payorder!=null?`；支付单支付成功率 ${pctD(payorder)}`:""));
+  stages.forEach(s=>L.push(`环节${s.code} ${s.label}：通过率 ${pctD(s.rate)}，累计转化 ${r2(s.after*100)}%，本环节流失约 ${r2(s.loss*100)} 个百分点`));
+  if(worst) L.push(`>> 流失最大的环节：环节${worst.code} ${worst.label}（约 ${r2(worst.loss*100)} 个百分点，应优先排查）`);
+  // 关键子指标
+  const sub=(c)=>{const v=row.m[c];return v==null?null:pctD(v);};
+  const kv=[["非3DS网关通过率","4.1"],["3DS网关通过率","4.2"],["风控3DS网关通过率","4.2.1"],["政策3DS网关通过率","4.2.2"],["3DS交易占比","3.2"],["风控综合通过率","3.1"]]
+    .map(([n,c])=>{const v=sub(c);return v?`${n} ${v}`:null;}).filter(Boolean);
+  if(kv.length) L.push("关键子指标："+kv.join("；"));
+  return L.join("\n");
 }
 
 </script>
