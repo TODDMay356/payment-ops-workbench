@@ -161,8 +161,24 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   svg .lab.sm{fill:var(--muted);font-size:10px}
   svg .val{fill:var(--ink);font-size:11px;font-weight:600}
   svg .axis{stroke:var(--line)} svg .grid-l{stroke:var(--line-2)} svg .base{stroke:var(--muted);stroke-dasharray:3 3}
-  svg .bar{cursor:pointer;transition:opacity .12s} svg .bar:hover{opacity:.78}
+  svg .bar{transition:opacity .12s}
+  svg .hit{fill:transparent;cursor:pointer}
+  svg .hit:hover+*{}
+  svg .rowhi{fill:var(--line-2);opacity:0}
   svg .cell{cursor:pointer;stroke:var(--surface);stroke-width:2}
+
+  /* HTML 横向条形列表（失败原因等长标签用，可换行、整行可点） */
+  .hbars{display:flex;flex-direction:column;gap:3px}
+  .hbar{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) 34% auto;gap:10px;align-items:center;
+    cursor:pointer;padding:7px 8px;border-radius:8px;width:100%}
+  .hbar:hover{background:var(--surface-2)}
+  .hbar:focus-visible{outline:2px solid var(--series);outline-offset:1px}
+  .hbar .lb{font-size:12.5px;color:var(--ink);line-height:1.35;word-break:break-word}
+  .hbar .tk{position:relative;height:14px;border-radius:4px;background:var(--surface-2);overflow:hidden}
+  .hbar .tk i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--series);min-width:2px}
+  .hbar .vl{font-size:12px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;color:var(--ink-2)}
+  .hbar .vl b{color:var(--ink)}
+  @media(max-width:560px){.hbar{grid-template-columns:1fr auto}.hbar .tk{display:none}}
   svg text{font-family:inherit;pointer-events:none}
   .empty{color:var(--muted);font-size:12.5px;padding:26px 8px;text-align:center}
   .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink-2);margin-top:8px}
@@ -284,6 +300,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         </div>
         <label class="field"><span>站点</span>
           <select id="siteSel"><option value="__all__">全部站点</option></select>
+        </label>
+        <label class="field"><span>口径</span>
+          <span class="seg" id="metricSeg">
+            <label><input type="radio" name="metric" value="count" checked><span>笔数</span></label>
+            <label><input type="radio" name="metric" value="amount"><span>金额</span></label>
+          </span>
         </label>
         <label class="toggle" title="失败原因含风控拦截关键词的行不计入分析">
           <input type="checkbox" id="exRisk" checked><span class="switch"></span>排除风控拦截
@@ -972,7 +994,9 @@ const esc=v=>String(v==null?"":v).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','
 const nfmt=n=>Number(n).toLocaleString();
 const trunc=(s,n)=>{s=String(s);return s.length>n?s.slice(0,n-1)+"…":s;};
 
-const state={ clean:null, tmode:'single', excludeRisk:true, site:'__all__', filters:[], matrixPair:null };
+const state={ clean:null, tmode:'single', excludeRisk:true, site:'__all__', filters:[], matrixPair:null, metric:'count' };
+const isAmt=()=>state.metric==='amount';
+const money=v=>{v=+v||0;const a=Math.abs(v);if(a>=1e8)return (v/1e8).toFixed(2)+"亿";if(a>=1e4)return (v/1e4).toFixed(1)+"万";return v.toLocaleString(undefined,{maximumFractionDigits:0});};
 let REPORT_SHEETS=[], REPORT_CONCL=[], AISHEET=null;
 
 /* ---- 主题切换 ---- */
@@ -1047,6 +1071,7 @@ function initControls(clean){
     ["#sStart","#sEnd","#lStart","#lEnd","#cStart","#cEnd"].forEach(id=>$(id).addEventListener("change",recompute));
     $("#siteSel").addEventListener("change",()=>{state.site=$("#siteSel").value;state.filters=[];recompute();});
     $("#exRisk").addEventListener("change",()=>{state.excludeRisk=$("#exRisk").checked;recompute();});
+    $$('input[name=metric]').forEach(el=>el.addEventListener("change",()=>{state.metric=$('input[name=metric]:checked').value;recompute();}));
     $("#report").addEventListener("toggle",()=>{ if($("#report").open) buildReport(); });
     $("#export").addEventListener("click",exportExcel);
     $("#aiBtn").addEventListener("click",runAI);
@@ -1109,33 +1134,50 @@ function renderChips(warn){
   if(state.filters.length){const clr=document.createElement("button");clr.className="clr";clr.textContent="清除全部筛选";clr.onclick=()=>{state.filters=[];$("#drill").innerHTML="";recompute();};box.appendChild(clr);}
 }
 
-function rateOf(rows){const n=rows.length,s=rows.filter(r=>r.status===STATUS_SUCCESS).length;return{n,s,rate:n>0?r2(s/n*100):0,fail:rows.filter(r=>r.status===STATUS_FAIL).length};}
+function aggMetric(rows){let n=0,succ=0,fail=0,amt=0,sA=0,fA=0;for(const r of rows){const a=+r.amount||0;n++;amt+=a;if(r.status===STATUS_SUCCESS){succ++;sA+=a;}else if(r.status===STATUS_FAIL){fail++;fA+=a;}}
+  const rate=isAmt()?(amt>0?r2(sA/amt*100):0):(n>0?r2(succ/n*100):0);
+  return {n,succ,fail,amt,succAmt:sA,failAmt:fA,rate};}
 function statusClass(rate){return rate>=80?'good':rate>=60?'warning':rate>=40?'serious':'critical';}
 
+/* 分组聚合（口径感知：笔数或金额），供图表层用；报表/导出仍走已验证的计数内核 */
+function groupMetric(rows,col,categories){
+  const m=new Map();
+  for(const r of rows){let k=r[col];if(k==null)continue;k=String(k);let e=m.get(k);if(!e){e={n:0,succ:0,amt:0,sA:0};m.set(k,e);}const a=+r.amount||0;e.n++;e.amt+=a;if(r.status===STATUS_SUCCESS){e.succ++;e.sA+=a;}}
+  let keys;
+  if(categories){for(const cc of categories)if(!m.has(cc))m.set(cc,{n:0,succ:0,amt:0,sA:0});for(const k of [...m.keys()])if(!categories.includes(k))m.delete(k);keys=categories.slice();}
+  else keys=[...m.keys()];
+  const amt=isAmt(), W=k=>amt?m.get(k).amt:m.get(k).n, SW=k=>amt?m.get(k).sA:m.get(k).succ;
+  const totW=keys.reduce((s,k)=>s+W(k),0), sumS=keys.reduce((s,k)=>s+SW(k),0);
+  const overall=totW>0?r2(sumS/totW*100):0;
+  const out=keys.map(k=>{const e=m.get(k),w=W(k),sw=SW(k);const rate=w>0?r2(sw/w*100):0,share=totW>0?r2(w/totW*100):0;
+    return {v:k,n:e.n,succ:e.succ,amt:e.amt,succAmt:e.sA,weight:w,share,rate,impact:r4(share/100*(overall-rate))};});
+  return {rows:out,overall};
+}
+
 function renderKPIs(view,lastView,curr,last){
-  const c=rateOf(view);
+  const c=aggMetric(view), amt=isAmt();
   const binAvail=hasDimData(view,"bin_country");
   const tBin=binAvail?generateGroupedTable(view,"bin_country","支付卡BIN国家",null):null;
   const tAmt=generateGroupedTable(view,"amount_range","交易金额区间",null,AMOUNT_LABELS);
   const tMet=generateGroupedTable(view,"payment_method","支付方式",null);
   const anomalies=findAnomalies([[tBin,"支付卡BIN国家"],[tAmt,"交易金额区间"],[tMet,"支付方式"]],false);
   const box=$("#kpis"); box.innerHTML="";
-  const kpi=(k,vHtml,dHtml,tipTxt)=>`<div class="kpi"><div class="k">${k}</div><div class="v">${vHtml}</div>${dHtml?`<div class="d ${dHtml.cls||''}">${dHtml.txt}</div>`:'<div class="d">&nbsp;</div>'}</div>`;
-  let l=null; if(lastView){l=rateOf(lastView);}
-  box.insertAdjacentHTML("beforeend",kpi("交易量",`<span class="tabnums">${nfmt(c.n)}</span>`,
-    l?deltaTxt(c.n-l.n,"笔"):null));
-  box.insertAdjacentHTML("beforeend",kpi("整体成功率",`<span class="v ${statusClass(c.rate)} tabnums" style="font-size:27px">${c.rate}%</span>`,
+  const kpi=(k,vHtml,dHtml)=>`<div class="kpi"><div class="k">${k}</div><div class="v">${vHtml}</div>${dHtml?`<div class="d ${dHtml.cls||''}">${dHtml.txt}</div>`:'<div class="d">&nbsp;</div>'}</div>`;
+  const l=lastView?aggMetric(lastView):null;
+  box.insertAdjacentHTML("beforeend",kpi(amt?"交易额":"交易量",`<span class="tabnums">${amt?money(c.amt):nfmt(c.n)}</span>`,
+    l?deltaTxt(amt?c.amt-l.amt:c.n-l.n,amt?"":"笔",false,false,amt?money:null):null));
+  box.insertAdjacentHTML("beforeend",kpi(amt?"金额成功率":"整体成功率",`<span class="v ${statusClass(c.rate)} tabnums" style="font-size:27px">${c.rate}%</span>`,
     l?deltaTxt(r2(c.rate-l.rate),"pt",true):null));
-  box.insertAdjacentHTML("beforeend",kpi("失败笔数",`<span class="tabnums">${nfmt(c.fail)}</span>`,
-    l?deltaTxt(c.fail-l.fail,"笔",false,true):null));
+  box.insertAdjacentHTML("beforeend",kpi(amt?"可挖回金额":"失败笔数",`<span class="tabnums">${amt?money(c.failAmt):nfmt(c.fail)}</span>`,
+    l?deltaTxt(amt?c.failAmt-l.failAmt:c.fail-l.fail,amt?"":"笔",false,true,amt?money:null):null));
   box.insertAdjacentHTML("beforeend",kpi("需关注异常项",`<span class="tabnums ${anomalies.length?'critical':''}" ${anomalies.length?'style="color:var(--critical)"':''}>${anomalies.length}</span>`,
     {txt: anomalies.length?"点开下方图表下钻定位":"未发现显著异常"}));
 }
-function deltaTxt(d,unit,pts,inverse){
+function deltaTxt(d,unit,pts,inverse,fmt){
   if(d===0) return {txt:"与上期持平"};
-  const up=d>0; const good=inverse?!up:up;
-  const arrow=up?"▲":"▼";
-  return {cls:good?"up":"down",txt:`${arrow} ${Math.abs(d)}${unit==="pt"?" 个百分点":unit} vs 上期`};
+  const up=d>0, good=inverse?!up:up, arrow=up?"▲":"▼";
+  const val=fmt?fmt(Math.abs(d)):Math.abs(d);
+  return {cls:good?"up":"down",txt:`${arrow} ${val}${unit==="pt"?" 个百分点":unit} vs 上期`};
 }
 
 /* ============================================================
@@ -1149,30 +1191,32 @@ function renderCharts(view){
   if(view.length===0){ host.innerHTML='<div class="card pad col-12"><div class="empty">当前筛选下没有数据。移除部分筛选或调整时间范围。</div></div>'; return; }
 
   const binAvail=hasDimData(view,"bin_country");
-  const tBin=binAvail?generateGroupedTable(view,"bin_country","支付卡BIN国家",null):null;
-  const tAmt=generateGroupedTable(view,"amount_range","交易金额区间",null,AMOUNT_LABELS);
-  const tMet=generateGroupedTable(view,"payment_method","支付方式",null);
+  const gmMet=groupMetric(view,"payment_method",null);
+  const gmAmt=groupMetric(view,"amount_range",AMOUNT_LABELS);
+  const gmBin=binAvail?groupMetric(view,"bin_country",null):null;
 
-  dimBarCard(tMet,"支付方式","payment_method");
-  dimBarCard(tAmt,"交易金额区间","amount_range");
-  if(binAvail) dimBarCard(tBin,"支付卡BIN国家","bin_country");
+  dimBarCard(gmMet,"支付方式","payment_method");
+  dimBarCard(gmAmt,"交易金额区间","amount_range");
+  if(binAvail) dimBarCard(gmBin,"支付卡BIN国家","bin_country");
   else { const c=card("col-4",`<div class="chart-head"><span class="t">支付卡 BIN 国家</span></div>`); c.insertAdjacentHTML("beforeend",'<div class="empty">本数据无有效 BIN 国家<br>（本地支付/钱包等无卡 BIN）</div>'); }
 
   paretoCard(view);
-  impactCard(view,tBin,tAmt,tMet,binAvail);
+  impactCard(view,gmBin,gmAmt,gmMet,binAvail);
+  if(isAmt()) recoverableCard(view);
+  trendCard(view);
+  timeHeatCard(view);
   matrixCard(view,binAvail);
 }
 
-/* 成功率 by 维度：横向条形 + 整体基准线，点击=筛选 */
-function dimBarCard(table,label,col){
-  const overall=r2(parseFloat((table.data.find(r=>r[label]==="合计")||{})["通过率"])||0);
-  let rows=dataRows(table,label).map(r=>({v:String(r[label]),n:+r["交易笔数"],share:+r["占比"],succ:+r["成功笔数"],rate:+r["通过率"],impact:+r["影响力"]}));
-  rows.sort((a,b)=>b.impact-a.impact); // 拖累最大在上
+/* 成功率 by 维度：横向条形 + 整体基准线；整行可点（含 0% 也能点中） */
+function dimBarCard(gm,label,col){
+  const overall=gm.overall;
+  let rows=gm.rows.slice().sort((a,b)=>b.impact-a.impact);
   if(rows.length>12) rows=rows.slice(0,12);
-  const c=card("col-4",`<div class="chart-head"><span class="t">成功率 · ${esc(label)}</span><span class="s">整体 ${overall}%</span></div>`);
+  const c=card("col-4",`<div class="chart-head"><span class="t">${isAmt()?'金额成功率':'成功率'} · ${esc(label)}</span><span class="s">整体 ${overall}%</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
   if(rows.length===0){body.innerHTML='<div class="empty">无数据</div>';return;}
-  const W=Math.max(body.clientWidth||c.clientWidth-36,300), padL=88,padR=44,padT=16,padB=18,rowH=25;
+  const W=Math.max(body.clientWidth||c.clientWidth-36,300), padL=88,padR=44,padT=16,padB=18,rowH=26;
   const H=padT+rows.length*rowH+padB, plotW=W-padL-padR;
   const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H,role:"img"});
   [0,50,100].forEach(t=>{const x=padL+t/100*plotW;svg.appendChild(E("line",{x1:x,y1:padT-4,x2:x,y2:H-padB+4,class:"grid-l"}));
@@ -1182,51 +1226,70 @@ function dimBarCard(table,label,col){
   rows.forEach((r,i)=>{
     const y=padT+i*rowH, bw=Math.max(r.rate/100*plotW,1);
     const active=state.filters.some(f=>f.col===col&&f.value===r.v);
+    if(active) svg.appendChild(E("rect",{x:0,y:y+1,width:W,height:rowH-2,rx:4,fill:"var(--series-soft)",opacity:.5}));
     svg.appendChild(E("text",{x:padL-6,y:y+rowH/2+1,"text-anchor":"end","dominant-baseline":"middle",class:"lab"},trunc(r.v===""?"（空）":r.v,8)));
-    const bar=E("rect",{x:padL,y:y+3,width:bw,height:rowH-9,rx:3,fill:barColor(r.rate,overall),class:"bar",opacity:active?1:.92,stroke:active?"var(--ink)":"none","stroke-width":active?1.5:0});
-    svg.appendChild(bar);
+    svg.appendChild(E("rect",{x:padL,y:y+4,width:bw,height:rowH-11,rx:3,fill:barColor(r.rate,overall),class:"bar"}));
     svg.appendChild(E("text",{x:padL+bw+5,y:y+rowH/2+1,"dominant-baseline":"middle",class:"val"},r.rate+"%"));
-    bar.style.cursor="pointer";
-    bar.addEventListener("click",()=>toggleFilter(col,DIM_LABEL[col],r.v));
-    bindTip(bar,()=>`<b>${esc(r.v===""?"（空）":r.v)}</b>${tipRows([["交易笔数",nfmt(r.n)],["占比",r.share+"%"],["成功",nfmt(r.succ)],["通过率",r.rate+"%"],["影响力",r.impact]])}<div class="r" style="margin-top:4px;color:#bbb">点击=筛选此项</div>`);
+    const hit=E("rect",{x:0,y,width:W,height:rowH,class:"hit"});
+    hit.addEventListener("click",()=>toggleFilter(col,DIM_LABEL[col],r.v));
+    bindTip(hit,()=>`<b>${esc(r.v===""?"（空）":r.v)}</b>${tipRows([["交易笔数",nfmt(r.n)],["交易额",money(r.amt)],["占比",r.share+"%"],[isAmt()?"金额成功率":"通过率",r.rate+"%"],["影响力",r.impact]])}<div class="r" style="margin-top:4px;color:#bbb">点击整行=筛选此项</div>`);
+    svg.appendChild(hit);
   });
   body.appendChild(svg);
-  c.insertAdjacentHTML("beforeend",`<div class="legend"><span><i style="background:var(--series)"></i>≥整体</span><span><i style="background:var(--serious)"></i>低于整体</span><span><i style="background:var(--critical)"></i>明显偏低</span><span>虚线=整体成功率</span></div>`);
+  c.insertAdjacentHTML("beforeend",`<div class="legend"><span><i style="background:var(--series)"></i>≥整体</span><span><i style="background:var(--serious)"></i>低于整体</span><span><i style="background:var(--critical)"></i>明显偏低</span><span>虚线=整体</span></div>`);
 }
 
-/* 失败原因帕累托（横向，占失败比 + 累计） */
+/* 失败原因帕累托：HTML 行，原因文字换行、整行可点、数字独立列不被遮 */
+function failGroups(view){
+  const fails=view.filter(r=>r.status===STATUS_FAIL);
+  const m=new Map();
+  for(const r of fails){const k=(r.fail_reason==null||r.fail_reason==="")?"（无原因）":String(r.fail_reason);let e=m.get(k);if(!e){e={k,n:0,amt:0};m.set(k,e);}e.n++;e.amt+=(+r.amount||0);}
+  const wf=e=>isAmt()?e.amt:e.n;
+  let arr=[...m.values()].sort((a,b)=>wf(b)-wf(a));
+  const total=arr.reduce((s,x)=>s+wf(x),0);
+  let cum=0; arr.forEach(x=>{x.share=total>0?r2(wf(x)/total*100):0;cum=r2(cum+x.share);x.cum=cum;});
+  return {arr,total};
+}
 function paretoCard(view){
-  const ft=generateFailreasonTable(view);
-  let det=ft.data.filter(r=>typeof r["占失败比"]==="number"&&r["支付失败原因"]!=="合计")
-    .map(r=>({reason:String(r["支付失败原因"]),n:+r["笔数"],share:+r["占失败比"],cum:+r["累计占失败比"]}));
-  const c=card("col-6",`<div class="chart-head"><span class="t">失败原因（占失败比，帕累托）</span><span class="s">点击可下钻</span></div>`);
+  const c=card("col-6",`<div class="chart-head"><span class="t">失败原因（${isAmt()?'占失败金额比':'占失败比'}，帕累托）</span><span class="s">点击可下钻</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
-  if(det.length===0){body.innerHTML='<div class="empty">当前视图无失败记录</div>';return;}
-  if(det.length>10){const rest=det.slice(10);const other={reason:"其他 "+rest.length+" 项",n:rest.reduce((s,x)=>s+x.n,0),share:r2(rest.reduce((s,x)=>s+x.share,0)),cum:det[det.length-1].cum,_other:true};det=det.slice(0,10);det.push(other);}
-  const W=Math.max(body.clientWidth||600,420),padL=200,padR=54,padT=8,padB=8,rowH=27;
-  const H=padT+det.length*rowH+padB, plotW=W-padL-padR;
-  const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
-  det.forEach((r,i)=>{
-    const y=padT+i*rowH, bw=Math.max(r.share/100*plotW,1);
-    svg.appendChild(E("text",{x:padL-8,y:y+rowH/2,"text-anchor":"end","dominant-baseline":"middle",class:"lab"},trunc(r.reason,22)));
-    const bar=E("rect",{x:padL,y:y+4,width:bw,height:rowH-10,rx:3,fill:"var(--series)",class:"bar"});
-    svg.appendChild(bar);
-    svg.appendChild(E("text",{x:padL+bw+5,y:y+rowH/2,"dominant-baseline":"middle",class:"val"},r.share+"%"));
-    svg.appendChild(E("text",{x:W-4,y:y+rowH/2,"text-anchor":"end","dominant-baseline":"middle",class:"lab sm"},"累计"+r.cum+"%"));
-    if(!r._other){ bar.style.cursor="pointer"; bar.addEventListener("click",()=>openDrill(r.reason)); }
-    bindTip(bar,()=>`<b>${esc(trunc(r.reason,60))}</b>${tipRows([["失败笔数",nfmt(r.n)],["占失败比",r.share+"%"],["累计",r.cum+"%"]])}${r._other?"":'<div class="r" style="margin-top:4px;color:#bbb">点击=下钻此原因</div>'}`);
-  });
-  body.appendChild(svg);
+  let {arr}=failGroups(view);
+  if(arr.length===0){body.innerHTML='<div class="empty">当前视图无失败记录</div>';return;}
+  if(arr.length>10){const rest=arr.slice(10);arr=arr.slice(0,10);arr.push({k:"其他 "+rest.length+" 项",n:rest.reduce((s,x)=>s+x.n,0),amt:rest.reduce((s,x)=>s+x.amt,0),share:r2(rest.reduce((s,x)=>s+x.share,0)),cum:arr[arr.length-1]?arr[arr.length-1].cum:0,_other:true});}
+  const max=Math.max(...arr.map(x=>x.share),1);
+  body.innerHTML=`<div class="hbars">`+arr.map(x=>`<button class="hbar" ${x._other?'disabled style="cursor:default"':`data-reason="${esc(x.k)}"`}>
+      <span class="lb">${esc(x.k)}</span>
+      <span class="tk"><i style="width:${(x.share/max*100).toFixed(1)}%"></i></span>
+      <span class="vl"><b>${x.share}%</b> · 累计${x.cum}% · ${isAmt()?money(x.amt):x.n+"笔"}</span></button>`).join("")+`</div>`;
+  body.querySelectorAll(".hbar[data-reason]").forEach(b=>b.addEventListener("click",()=>openDrill(b.dataset.reason)));
+}
+/* 可挖回金额 · 按失败原因（金额口径下显示） */
+function recoverableCard(view){
+  const c=card("col-12",`<div class="chart-head"><span class="t">可挖回金额 · 按失败原因</span><span class="s">= 各失败原因的失败交易金额合计</span></div>`);
+  const body=document.createElement("div"); c.appendChild(body);
+  const fails=view.filter(r=>r.status===STATUS_FAIL);
+  const m=new Map();for(const r of fails){const k=(r.fail_reason==null||r.fail_reason==="")?"（无原因）":String(r.fail_reason);let e=m.get(k);if(!e){e={k,amt:0,n:0};m.set(k,e);}e.amt+=(+r.amount||0);e.n++;}
+  let arr=[...m.values()].sort((a,b)=>b.amt-a.amt); const total=arr.reduce((s,x)=>s+x.amt,0);
+  if(arr.length===0){body.innerHTML='<div class="empty">当前视图无失败记录</div>';return;}
+  c.querySelector(".s").textContent=`= 各失败原因的失败交易金额合计 · 共 ${money(total)}`;
+  if(arr.length>10){const rest=arr.slice(10);arr=arr.slice(0,10);arr.push({k:"其他 "+rest.length+" 项",amt:rest.reduce((s,x)=>s+x.amt,0),n:rest.reduce((s,x)=>s+x.n,0),_other:true});}
+  const max=Math.max(...arr.map(x=>x.amt),1);
+  body.innerHTML=`<div class="hbars">`+arr.map(x=>{const share=total>0?r2(x.amt/total*100):0;
+    return `<button class="hbar" ${x._other?'disabled style="cursor:default"':`data-reason="${esc(x.k)}"`}>
+      <span class="lb">${esc(x.k)}</span>
+      <span class="tk"><i style="width:${(x.amt/max*100).toFixed(1)}%;background:var(--critical)"></i></span>
+      <span class="vl"><b>${money(x.amt)}</b> · ${share}% · ${x.n}笔</span></button>`;}).join("")+`</div>`;
+  body.querySelectorAll(".hbar[data-reason]").forEach(b=>b.addEventListener("click",()=>openDrill(b.dataset.reason)));
 }
 
-/* 影响力排行（发散条形：正=拖累，负=拉升），点击=筛选 */
-function impactCard(view,tBin,tAmt,tMet,binAvail){
+/* 影响力排行（发散条形：正=拖累，负=拉升），整行可点=筛选 */
+function impactCard(view,gmBin,gmAmt,gmMet,binAvail){
   let items=[];
-  const push=(t,label,col)=>{ if(!t)return; dataRows(t,label).forEach(r=>items.push({dim:DIM_LABEL[col],col,v:String(r[label]),impact:+r["影响力"],rate:+r["通过率"],share:+r["占比"]})); };
-  if(binAvail) push(tBin,"支付卡BIN国家","bin_country");
-  push(tAmt,"交易金额区间","amount_range"); push(tMet,"支付方式","payment_method");
+  const push=(gm,col)=>{ if(!gm)return; gm.rows.forEach(r=>items.push({dim:DIM_LABEL[col],col,v:r.v,impact:r.impact,rate:r.rate,share:r.share,n:r.n,amt:r.amt})); };
+  if(binAvail) push(gmBin,"bin_country");
+  push(gmAmt,"amount_range"); push(gmMet,"payment_method");
   items=items.filter(x=>isFinite(x.impact)&&x.impact!==0).sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact)).slice(0,12);
-  const c=card("col-6",`<div class="chart-head"><span class="t">谁在拖累整体成功率（影响力）</span><span class="s">正=拖累 · 负=拉升</span></div>`);
+  const c=card("col-6",`<div class="chart-head"><span class="t">谁在拖累整体${isAmt()?'金额':''}成功率（影响力）</span><span class="s">正=拖累 · 负=拉升</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
   if(items.length===0){body.innerHTML='<div class="empty">无数据</div>';return;}
   const maxA=Math.max(...items.map(x=>Math.abs(x.impact)))||1;
@@ -1235,20 +1298,70 @@ function impactCard(view,tBin,tAmt,tMet,binAvail){
   const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
   svg.appendChild(E("line",{x1:cx,y1:padT-2,x2:cx,y2:H-padB+2,class:"axis"}));
   items.forEach((r,i)=>{
-    const y=padT+i*rowH, w=Math.abs(r.impact)/maxA*(plotW/2);
-    const drag=r.impact>0;
-    const x=drag?cx:cx-w;
+    const y=padT+i*rowH, w=Math.abs(r.impact)/maxA*(plotW/2), drag=r.impact>0, x=drag?cx:cx-w;
     const active=state.filters.some(f=>f.col===r.col&&f.value===r.v);
+    if(active) svg.appendChild(E("rect",{x:0,y:y+1,width:W,height:rowH-2,rx:4,fill:"var(--series-soft)",opacity:.5}));
     svg.appendChild(E("text",{x:8,y:y+rowH/2,"dominant-baseline":"middle",class:"lab"},trunc(r.dim+"·"+(r.v===""?"空":r.v),16)));
-    const bar=E("rect",{x,y:y+4,width:Math.max(w,1),height:rowH-10,rx:3,fill:drag?"var(--drag)":"var(--lift)",class:"bar",stroke:active?"var(--ink)":"none","stroke-width":active?1.5:0});
-    svg.appendChild(bar);
+    svg.appendChild(E("rect",{x,y:y+4,width:Math.max(w,1),height:rowH-10,rx:3,fill:drag?"var(--drag)":"var(--lift)",class:"bar"}));
     svg.appendChild(E("text",{x:drag?x+w+5:x-5,y:y+rowH/2,"text-anchor":drag?"start":"end","dominant-baseline":"middle",class:"val"},r.impact));
-    bar.style.cursor="pointer";
-    bar.addEventListener("click",()=>toggleFilter(r.col,r.dim,r.v));
-    bindTip(bar,()=>`<b>${esc(r.dim)}·${esc(r.v===""?"空":r.v)}</b>${tipRows([["通过率",r.rate+"%"],["占比",r.share+"%"],["影响力",r.impact],["含义",drag?"拖累整体":"拉升整体"]])}<div class="r" style="margin-top:4px;color:#bbb">点击=筛选此项</div>`);
+    const hit=E("rect",{x:0,y,width:W,height:rowH,class:"hit"});
+    hit.addEventListener("click",()=>toggleFilter(r.col,r.dim,r.v));
+    bindTip(hit,()=>`<b>${esc(r.dim)}·${esc(r.v===""?"空":r.v)}</b>${tipRows([[isAmt()?"金额成功率":"通过率",r.rate+"%"],["占比",r.share+"%"],["影响力",r.impact],["含义",drag?"拖累整体":"拉升整体"]])}<div class="r" style="margin-top:4px;color:#bbb">点击整行=筛选此项</div>`);
+    svg.appendChild(hit);
   });
   body.appendChild(svg);
-  c.insertAdjacentHTML("beforeend",`<div class="legend"><span><i style="background:var(--drag)"></i>拖累（通过率低于整体×占比）</span><span><i style="background:var(--lift)"></i>拉升</span></div>`);
+  c.insertAdjacentHTML("beforeend",`<div class="legend"><span><i style="background:var(--drag)"></i>拖累</span><span><i style="background:var(--lift)"></i>拉升</span></div>`);
+}
+
+/* 成功率趋势 · 按天（口径感知）：柱=当日量，线=成功率 */
+function trendCard(view){
+  const byDay=new Map();
+  for(const r of view){const d=r.pay_time;const k=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    let e=byDay.get(k);if(!e){e={k,date:new Date(d.getFullYear(),d.getMonth(),d.getDate()),n:0,succ:0,amt:0,sA:0};byDay.set(k,e);}
+    const a=+r.amount||0;e.n++;e.amt+=a;if(r.status===STATUS_SUCCESS){e.succ++;e.sA+=a;}}
+  const days=[...byDay.values()].sort((a,b)=>a.date-b.date);
+  const c=card("col-12",`<div class="chart-head"><span class="t">成功率趋势 · 按天（${isAmt()?'金额口径':'笔数口径'}）</span><span class="s">柱=当日${isAmt()?'交易额':'交易量'} · 线=成功率</span></div>`);
+  const body=document.createElement("div"); c.appendChild(body);
+  if(days.length<2){body.innerHTML='<div class="empty">数据仅覆盖 '+days.length+' 天，暂无趋势（选更大时间范围或切到对比模式）</div>';return;}
+  const rate=e=>isAmt()?(e.amt>0?r2(e.sA/e.amt*100):0):(e.n>0?r2(e.succ/e.n*100):0), vol=e=>isAmt()?e.amt:e.n;
+  const W=Math.max(body.clientWidth||900,520),padL=42,padR=14,padT=14,padB=30,H=200;
+  const plotW=W-padL-padR,plotH=H-padT-padB,maxVol=Math.max(...days.map(vol),1),n=days.length,step=plotW/n;
+  const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
+  [0,50,100].forEach(t=>{const y=padT+plotH*(1-t/100);svg.appendChild(E("line",{x1:padL,y1:y,x2:W-padR,y2:y,class:"grid-l"}));svg.appendChild(E("text",{x:padL-6,y:y+3,"text-anchor":"end",class:"lab sm"},t+"%"));});
+  days.forEach((e,i)=>{const bh=vol(e)/maxVol*plotH*0.55;svg.appendChild(E("rect",{x:padL+i*step+step*0.22,y:padT+plotH-bh,width:step*0.56,height:bh,rx:2,fill:"var(--series-soft)"}));});
+  const pts=days.map((e,i)=>[padL+i*step+step/2,padT+plotH*(1-rate(e)/100)]);
+  let dstr="";pts.forEach((p,i)=>dstr+=(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)+" ");
+  svg.appendChild(E("path",{d:dstr,fill:"none",stroke:"var(--series)","stroke-width":2}));
+  const lblEvery=Math.ceil(n/12);
+  days.forEach((e,i)=>{const p=pts[i];svg.appendChild(E("circle",{cx:p[0],cy:p[1],r:3.5,fill:"var(--series)",stroke:"var(--surface)","stroke-width":2}));
+    if(n<=14||i%lblEvery===0) svg.appendChild(E("text",{x:p[0],y:H-12,"text-anchor":"middle",class:"lab sm"},(e.date.getMonth()+1)+"/"+e.date.getDate()));
+    const hit=E("rect",{x:padL+i*step,y:padT,width:step,height:plotH,class:"hit"});
+    bindTip(hit,()=>`<b>${e.k}</b>${tipRows([[isAmt()?"交易额":"交易量",isAmt()?money(e.amt):nfmt(e.n)],["成功率",rate(e)+"%"]])}`);
+    svg.appendChild(hit);});
+  body.appendChild(svg);
+}
+
+/* 时段 × 星期 成功率热力 */
+function timeHeatCard(view){
+  const WD=["周一","周二","周三","周四","周五","周六","周日"];
+  const grid=[];for(let d=0;d<7;d++){grid[d]=[];for(let h=0;h<24;h++)grid[d][h]={n:0,succ:0,amt:0,sA:0};}
+  for(const r of view){const dt=r.pay_time,wd=(dt.getDay()+6)%7,h=dt.getHours(),a=+r.amount||0,g=grid[wd][h];g.n++;g.amt+=a;if(r.status===STATUS_SUCCESS){g.succ++;g.sA+=a;}}
+  const c=card("col-12",`<div class="chart-head"><span class="t">时段 × 星期 · 成功率热力</span><span class="s">红=成功率低 · 灰=无交易 · 悬停看笔数</span></div>`);
+  const body=document.createElement("div"); c.appendChild(body);
+  if(!grid.some(row=>row.some(g=>g.n>0))){body.innerHTML='<div class="empty">无数据</div>';return;}
+  const W=Math.max(body.clientWidth||900,520),padL=44,padT=6,cw=(W-padL)/24,ch=23,H=padT+7*ch+20;
+  const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
+  for(let h=0;h<24;h+=3) svg.appendChild(E("text",{x:padL+h*cw+cw/2,y:padT+7*ch+14,"text-anchor":"middle",class:"lab sm"},h+"时"));
+  for(let d=0;d<7;d++){
+    svg.appendChild(E("text",{x:padL-6,y:padT+d*ch+ch/2,"text-anchor":"end","dominant-baseline":"middle",class:"lab sm"},WD[d]));
+    for(let h=0;h<24;h++){const g=grid[d][h],x=padL+h*cw,y=padT+d*ch;
+      if(g.n===0){svg.appendChild(E("rect",{x:x+1,y:y+1,width:cw-2,height:ch-2,rx:2,fill:"var(--surface-2)"}));continue;}
+      const rate=isAmt()?(g.amt>0?g.sA/g.amt*100:0):(g.succ/g.n*100);
+      const rect=E("rect",{x:x+1,y:y+1,width:cw-2,height:ch-2,rx:2,fill:badColor(rate),class:"cell"});
+      bindTip(rect,()=>`<b>${WD[d]} ${h}:00–${h}:59</b>${tipRows([["交易量",nfmt(g.n)],[isAmt()?"交易额":"成功",isAmt()?money(g.amt):nfmt(g.succ)],["成功率",r2(rate)+"%"]])}`);
+      svg.appendChild(rect);}
+  }
+  body.appendChild(svg);
 }
 
 /* 维度×维度 热力图（颜色=偏低程度），点击格子=双重筛选 */
