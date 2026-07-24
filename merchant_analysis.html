@@ -461,6 +461,9 @@ const STATUS_FAIL = "支付失败";
 const RISK_BLOCK_KEYWORD = "ZFFK00003";
 const DRILL_DOWN_TOP_N = 3;
 const L3_FAIL_KEYWORDS = ["MN3DSFAILB","MN3DSFAIL","3DS","3ds","ZFFK00003","风控系统拦截","风控拦截"];
+// L3 排除的“保留名单”：这些属于通道(网关)层，即使命中上面的 3DS 关键词也不排除。
+// 例：ZFWG 开头是通道发起的 3DS 验证失败，属网关层失败，应保留在“纯网关层”视图里。
+const L3_KEEP_KEYWORDS = ["ZFWG"];
 
 const ANOMALY_RATE_DROP_WARN = -10;
 const ANOMALY_RATE_DROP_URGENT = -20;
@@ -602,7 +605,8 @@ function excludeL3(rows){
   return rows.filter(r => {
     if(r.fail_reason === null || r.fail_reason === undefined) return true; // isna -> 保留
     const s = failHaystack(r);
-    return !L3_FAIL_KEYWORDS.some(kw => s.includes(kw));
+    // 命中 L3 关键词才考虑排除；但若同时命中“保留名单”(通道发起，如 ZFWG)，则保留
+    return !L3_FAIL_KEYWORDS.some(kw => s.includes(kw)) || L3_KEEP_KEYWORDS.some(kw => s.includes(kw));
   });
 }
 function hasDimData(rows, col){
