@@ -261,12 +261,6 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     <input type="password" id="lockPw" placeholder="访问密码" autocomplete="current-password">
     <button type="submit" class="btn" style="width:100%">进入</button>
     <div id="lockErr" class="lock-err"></div>
-    <button type="button" class="lock-link" id="lockGenToggle">改密码 / 生成密码哈希</button>
-    <div id="lockGen" hidden>
-      <input type="text" id="genPw" placeholder="输入新密码，实时得到其哈希">
-      <div class="lock-hash" id="genOut"></div>
-      <div class="hint" style="margin-top:6px;text-align:left">把上面这串替换到文件里 <code>ACCESS_SHA256 = "..."</code> 那一行，即可改成你自己的密码。</div>
-    </div>
   </form>
 </div>
 
@@ -395,9 +389,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       真正的访问控制需要服务器登录后端，单文件网页做不到。
    —— 数据本就只在本地浏览器，此锁仅用于“防随手看”。
 
-   改密码：打开锁屏点“改密码 / 生成密码哈希”，输入你的新密码，
-           把得到的那串哈希替换掉下面这一行的值即可。
-   默认密码：pay2026  —— 首次使用后请尽快改成你自己的。
+   固定密码：pay2026（即下面这行哈希对应的密码）。
+   如需改密码：把下面这行替换成新密码的 SHA-256(hex)即可（可用任意在线/命令行工具生成）。
    ============================================================ */
 const ACCESS_SHA256 = "31d4f7e2146062c5d0325c92fbc6b099eda2f6b1f22f7f9e2e08add3af3c8612";
 
@@ -440,13 +433,6 @@ function sha256(str){
       sessionStorage.setItem("ma_unlocked","1");
       document.documentElement.style.overflow=""; lock.remove();
     } else { err.textContent="密码错误，请重试"; pw.select(); }
-  });
-  document.getElementById("lockGenToggle").addEventListener("click",()=>{
-    const g=document.getElementById("lockGen"); g.hidden=!g.hidden;
-    if(!g.hidden) document.getElementById("genPw").focus();
-  });
-  document.getElementById("genPw").addEventListener("input",e=>{
-    document.getElementById("genOut").textContent=e.target.value?sha256(e.target.value):"";
   });
   try{ pw.focus(); }catch(e){}
 })();
