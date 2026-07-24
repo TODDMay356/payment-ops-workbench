@@ -151,9 +151,16 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   /* charts grid */
   .grid{display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
-  .col-4{grid-column:span 4} .col-6{grid-column:span 6} .col-12{grid-column:span 12}
-  @media(max-width:900px){.col-4,.col-6{grid-column:span 12}}
-  .chart-head{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 10px}
+  .col-4{grid-column:span 4} .col-5{grid-column:span 5} .col-6{grid-column:span 6}
+  .col-7{grid-column:span 7} .col-8{grid-column:span 8} .col-12{grid-column:span 12}
+  @media(max-width:900px){.col-4,.col-5,.col-6,.col-7,.col-8{grid-column:span 12}}
+  .tabs{display:flex;gap:4px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:5px;box-shadow:var(--shadow)}
+  .tab{all:unset;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-2);padding:8px 15px;border-radius:8px;transition:background .12s}
+  .tab:hover{background:var(--surface-2)}
+  .tab:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+  .tab.on{background:var(--brand-soft);color:var(--brand-ink)}
+  .chart-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:0 0 10px}
+  .chart-head select{height:26px}
   .chart-head .t{font-size:13.5px;font-weight:600;color:var(--ink)}
   .chart-head .s{font-size:11.5px;color:var(--muted)}
   .chart-head select{height:26px;min-width:0;font-size:12px;padding:0 6px}
@@ -1005,7 +1012,7 @@ const esc=v=>String(v==null?"":v).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','
 const nfmt=n=>Number(n).toLocaleString();
 const trunc=(s,n)=>{s=String(s);return s.length>n?s.slice(0,n-1)+"…":s;};
 
-const state={ clean:null, tmode:'single', excludeRisk:true, site:'__all__', filters:[], matrixPair:null, metric:'count' };
+const state={ clean:null, tmode:'single', excludeRisk:true, site:'__all__', filters:[], matrixPair:null, metric:'count', tab:'dim', dimSel:'payment_method', _view:null };
 const isAmt=()=>state.metric==='amount';
 const money=v=>{v=+v||0;const a=Math.abs(v);if(a>=1e8)return (v/1e8).toFixed(2)+"亿";if(a>=1e4)return (v/1e4).toFixed(1)+"万";return v.toLocaleString(undefined,{maximumFractionDigits:0});};
 let REPORT_SHEETS=[], REPORT_CONCL=[], AISHEET=null;
@@ -1201,33 +1208,52 @@ function card(cls,titleHtml){const d=document.createElement("div");d.className="
 function barColor(rate,overall){ if(rate>=overall) return "var(--series)"; return (overall-rate<12)?"var(--serious)":"var(--critical)"; }
 
 function renderCharts(view){
+  state._view=view;
   const host=$("#charts"); host.innerHTML="";
   if(view.length===0){ host.innerHTML='<div class="card pad col-12"><div class="empty">当前筛选下没有数据。移除部分筛选或调整时间范围。</div></div>'; return; }
-
   const binAvail=hasDimData(view,"bin_country");
-  const gmMet=groupMetric(view,"payment_method",null);
-  const gmAmt=groupMetric(view,"amount_range",AMOUNT_LABELS);
-  const gmBin=binAvail?groupMetric(view,"bin_country",null):null;
 
-  dimBarCard(gmMet,"支付方式","payment_method");
-  dimBarCard(gmAmt,"交易金额区间","amount_range");
-  if(binAvail) dimBarCard(gmBin,"支付卡BIN国家","bin_country");
-  else { const c=card("col-4",`<div class="chart-head"><span class="t">支付卡 BIN 国家</span></div>`); c.insertAdjacentHTML("beforeend",'<div class="empty">本数据无有效 BIN 国家<br>（本地支付/钱包等无卡 BIN）</div>'); }
+  const tabs=[["dim","维度拆解"],["fail","失败原因"],["trend","趋势 / 时段"],["cross","交叉热力"]];
+  if(!tabs.some(t=>t[0]===state.tab)) state.tab="dim";
+  const bar=document.createElement("div"); bar.className="tabs col-12";
+  bar.innerHTML=tabs.map(t=>`<button class="tab ${state.tab===t[0]?"on":""}" data-tab="${t[0]}">${esc(t[1])}</button>`).join("");
+  host.appendChild(bar);
+  bar.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.tab=b.dataset.tab;renderCharts(state._view);}));
 
-  paretoCard(view);
-  impactCard(view,gmBin,gmAmt,gmMet,binAvail);
-  if(isAmt()) recoverableCard(view);
-  trendCard(view);
-  timeHeatCard(view);
-  matrixCard(view,binAvail);
+  if(state.tab==="dim") renderDimTab(view,binAvail);
+  else if(state.tab==="fail"){ paretoCard(view,"col-12"); if(isAmt()) recoverableCard(view); }
+  else if(state.tab==="trend"){ trendCard(view); timeHeatCard(view); }
+  else if(state.tab==="cross") matrixCard(view,binAvail);
+}
+
+function renderDimTab(view,binAvail){
+  const dims=[["payment_method","支付方式"],["amount_range","交易金额区间"]];
+  if(binAvail) dims.push(["bin_country","支付卡BIN国家"]);
+  if(!dims.some(d=>d[0]===state.dimSel)) state.dimSel=dims[0][0];
+  const [col,label]=dims.find(d=>d[0]===state.dimSel);
+  const gm=groupMetric(view,col,col==="amount_range"?AMOUNT_LABELS:null);
+  const sel=`<select id="dimSel" style="margin-left:8px">${dims.map(d=>`<option value="${d[0]}" ${d[0]===state.dimSel?"selected":""}>${esc(d[1])}</option>`).join("")}</select>`;
+  dimBarCard(gm,label,col,"col-7",sel);
+  impactCard(view, binAvail?groupMetric(view,"bin_country",null):null, groupMetric(view,"amount_range",AMOUNT_LABELS), groupMetric(view,"payment_method",null), binAvail, "col-5");
+  dimTableCard(gm,label,col);
+  const ds=$("#dimSel"); if(ds) ds.addEventListener("change",e=>{state.dimSel=e.target.value;renderCharts(state._view);});
+}
+function dimTableCard(gm,label,col){
+  const c=card("col-12",`<div class="chart-head"><span class="t">${esc(label)} · 明细</span><span class="s">点行=筛选此项</span></div>`);
+  const rows=gm.rows.slice().sort((a,b)=>a.impact-b.impact);
+  let h=`<div class="tbl-scroll"><table class="grid-tbl"><thead><tr><th>${esc(label)}</th><th>交易量</th><th>交易额</th><th>占比</th><th>成功</th><th>${isAmt()?'金额成功率':'通过率'}</th><th>影响力</th></tr></thead><tbody>`;
+  for(const r of rows) h+=`<tr data-v="${esc(r.v)}" style="cursor:pointer"><td>${esc(r.v===""?"（空）":r.v)}</td><td class="tabnums">${nfmt(r.n)}</td><td class="tabnums">${money(r.amt)}</td><td class="tabnums">${r.share}%</td><td class="tabnums">${nfmt(r.succ)}</td><td class="tabnums">${r.rate}%</td><td class="tabnums">${r.impact}</td></tr>`;
+  h+=`</tbody></table></div>`;
+  const body=document.createElement("div"); body.innerHTML=h; c.appendChild(body);
+  body.querySelectorAll("tr[data-v]").forEach(tr=>tr.addEventListener("click",()=>toggleFilter(col,DIM_LABEL[col],tr.dataset.v)));
 }
 
 /* 成功率 by 维度：横向条形 + 整体基准线；整行可点（含 0% 也能点中） */
-function dimBarCard(gm,label,col){
+function dimBarCard(gm,label,col,span,headExtra){
   const overall=gm.overall;
   let rows=gm.rows.slice().sort((a,b)=>a.impact-b.impact); // 负=拖累最大在上
   if(rows.length>12) rows=rows.slice(0,12);
-  const c=card("col-4",`<div class="chart-head"><span class="t">${isAmt()?'金额成功率':'成功率'} · ${esc(label)}</span><span class="s">整体 ${overall}%</span></div>`);
+  const c=card(span||"col-4",`<div class="chart-head"><span class="t">${isAmt()?'金额成功率':'成功率'} · ${esc(label)}${headExtra||""}</span><span class="s">整体 ${overall}%</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
   if(rows.length===0){body.innerHTML='<div class="empty">无数据</div>';return;}
   const W=Math.max(body.clientWidth||c.clientWidth-36,300), padL=88,padR=44,padT=16,padB=18,rowH=26;
@@ -1264,8 +1290,8 @@ function failGroups(view){
   let cum=0; arr.forEach(x=>{x.share=total>0?r2(wf(x)/total*100):0;cum=r2(cum+x.share);x.cum=cum;});
   return {arr,total};
 }
-function paretoCard(view){
-  const c=card("col-6",`<div class="chart-head"><span class="t">失败原因（${isAmt()?'占失败金额比':'占失败比'}，帕累托）</span><span class="s">点击可下钻</span></div>`);
+function paretoCard(view,span){
+  const c=card(span||"col-6",`<div class="chart-head"><span class="t">失败原因（${isAmt()?'占失败金额比':'占失败比'}，帕累托）</span><span class="s">点击可下钻</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
   let {arr}=failGroups(view);
   if(arr.length===0){body.innerHTML='<div class="empty">当前视图无失败记录</div>';return;}
@@ -1297,13 +1323,13 @@ function recoverableCard(view){
 }
 
 /* 影响力排行（发散条形：正=拖累，负=拉升），整行可点=筛选 */
-function impactCard(view,gmBin,gmAmt,gmMet,binAvail){
+function impactCard(view,gmBin,gmAmt,gmMet,binAvail,span){
   let items=[];
   const push=(gm,col)=>{ if(!gm)return; gm.rows.forEach(r=>items.push({dim:DIM_LABEL[col],col,v:r.v,impact:r.impact,rate:r.rate,share:r.share,n:r.n,amt:r.amt})); };
   if(binAvail) push(gmBin,"bin_country");
   push(gmAmt,"amount_range"); push(gmMet,"payment_method");
   items=items.filter(x=>isFinite(x.impact)&&x.impact!==0).sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact)).slice(0,12);
-  const c=card("col-6",`<div class="chart-head"><span class="t">各项对整体${isAmt()?'金额':''}成功率的影响力</span><span class="s">正=提高（蓝） · 负=拖累（红）</span></div>`);
+  const c=card(span||"col-6",`<div class="chart-head"><span class="t">各项对整体${isAmt()?'金额':''}成功率的影响力</span><span class="s">正=提高（蓝） · 负=拖累（红）</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
   if(items.length===0){body.innerHTML='<div class="empty">无数据</div>';return;}
   const maxA=Math.max(...items.map(x=>Math.abs(x.impact)))||1;
