@@ -458,11 +458,18 @@ const COLUMN_MAP = {
 
 const STATUS_SUCCESS = "支付成功";
 const STATUS_FAIL = "支付失败";
-const RISK_BLOCK_KEYWORD = "ZFFK00003";
 const DRILL_DOWN_TOP_N = 3;
-const L3_FAIL_KEYWORDS = ["MN3DSFAILB","MN3DSFAIL","3DS","3ds","ZFFK00003","风控系统拦截","风控拦截"];
-// L3 排除的“保留名单”：这些属于通道(网关)层，即使命中上面的 3DS 关键词也不排除。
-// 例：ZFWG 开头是通道发起的 3DS 验证失败，属网关层失败，应保留在“纯网关层”视图里。
+
+// 失败编码口径（按业务定义）：
+// 3DS 验证失败（风控/政策侧发起）编码：
+const CODE_3DS_FAIL = ["MN3DSFAIL","MN3DSFAILB","ZF3D00001","ZF3D00002","ZF3D00003","ZF3D00004"];
+// 风控拦截编码：
+const CODE_RISK_BLOCK = ["ZFFK00002","ZFFK00003","ZFFK00004","ZFFK00005","ZFFK00006"];
+// 「排除风控拦截」开关：命中这些即视为平台风控拦截（含旧版文字，向后兼容）
+const RISK_BLOCK_KEYWORDS = [...CODE_RISK_BLOCK, "风控系统拦截", "风控拦截"];
+// L3 排除（纯网关层视图）：3DS验证失败 + 风控拦截 都排除
+const L3_FAIL_KEYWORDS = [...CODE_3DS_FAIL, ...CODE_RISK_BLOCK, "风控系统拦截", "风控拦截"];
+// 保留名单：通道(网关)层发起的，即使含 3DS 也不排除。ZFWG = 通道发起的 3DS 验证失败。
 const L3_KEEP_KEYWORDS = ["ZFWG"];
 
 const ANOMALY_RATE_DROP_WARN = -10;
@@ -598,7 +605,7 @@ function loadAndClean(rawRows, headers){
 function failHaystack(r){ return String(r.fail_reason||"") + " " + String(r.fail_code||""); }
 function excludeRisk(rows){
   if(!hasCol("fail_reason")) return rows;
-  return rows.filter(r => !failHaystack(r).includes(RISK_BLOCK_KEYWORD));
+  return rows.filter(r => { const s = failHaystack(r); return !RISK_BLOCK_KEYWORDS.some(kw => s.includes(kw)); });
 }
 function excludeL3(rows){
   if(!hasCol("fail_reason")) return rows;
