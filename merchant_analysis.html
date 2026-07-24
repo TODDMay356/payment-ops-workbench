@@ -446,7 +446,12 @@ const AMOUNT_LABELS = ["0-1","1-20","20-50","50-100","100-500","500-1000","1000-
 
 const COLUMN_MAP = {
   "交易单号":"order_id","商户号":"merchant_id","商户名称":"merchant_name","交易币种":"currency",
-  "交易金额":"amount","支付方式":"payment_method","流水单状态":"status","支付失败原因":"fail_reason",
+  "交易金额":"amount","支付方式":"payment_method","流水单状态":"status",
+  // 失败原因：兼容新旧格式。旧版单列「支付失败原因」；新版拆成「初始失败原因」(干净文字)
+  // +「报错编码」+「失败原因报错」(带【编码】)。清洗时按优先级合成 fail_reason，并保留 fail_code。
+  "支付失败原因":"fail_reason_old","初始失败原因":"fail_reason_init","失败原因报错":"fail_reason_full",
+  "报错编码":"fail_code","初始失败原因编码":"fail_code2",
+  "通道":"channel",
   "支付时间":"pay_time","备案网址":"website","支付卡bin国家":"bin_country","是否3D交易":"is_3ds",
   "风控3DS决策":"risk_3ds","政策3DS决策":"policy_3ds","商户3ds决策":"merchant_3ds",
 };
@@ -540,6 +545,8 @@ function loadAndClean(rawRows, headers){
   const rename = {};
   headers.forEach(h => { const t = String(h).trim(); if(COLUMN_MAP[t]) rename[t] = COLUMN_MAP[t]; });
   PRESENT = new Set(Object.values(rename));
+  if(PRESENT.has("fail_reason_init")||PRESENT.has("fail_reason_old")||PRESENT.has("fail_reason_full")) PRESENT.add("fail_reason");
+  if(PRESENT.has("fail_code")||PRESENT.has("fail_code2")) PRESENT.add("fail_code");
 
   const out = [];
   for(const raw of rawRows){
@@ -564,10 +571,14 @@ function loadAndClean(rawRows, headers){
     if(PRESENT.has("website") && r.website !== null && r.website !== undefined){
       r.website = cleanWebsite(r.website);
     }
-    // status/fail_reason 归一
+    // status 归一
     if(r.status !== null && r.status !== undefined) r.status = String(r.status).trim();
-    if(r.fail_reason !== undefined && r.fail_reason !== null) r.fail_reason = String(r.fail_reason);
-    else r.fail_reason = null;
+    // fail_reason 合成：优先「初始失败原因」→「支付失败原因」(旧)→「失败原因报错」(带编码)
+    const _fne = (...xs)=>{ for(const x of xs){ if(x!==null&&x!==undefined&&String(x).trim()!=="") return x; } return null; };
+    const fr = _fne(r.fail_reason_init, r.fail_reason_old, r.fail_reason_full);
+    r.fail_reason = fr===null?null:String(fr).trim();
+    const fc = _fne(r.fail_code, r.fail_code2);
+    r.fail_code = fc===null?null:String(fc).trim();
     // currency
     if(r.currency !== null && r.currency !== undefined) r.currency = String(r.currency).trim();
     // amount_range（null = 超范围/缺失，对应 pd.cut 的 NaN）
@@ -580,15 +591,17 @@ function loadAndClean(rawRows, headers){
 /* ============================================================
    排除风控 / L3 失败（对应 exclude_risk / exclude_l3_fail / has_dim_data）
    ============================================================ */
+// 关键词匹配时同时看 失败原因文字 + 报错编码（新格式编码在单独列，旧格式内嵌在文字里）
+function failHaystack(r){ return String(r.fail_reason||"") + " " + String(r.fail_code||""); }
 function excludeRisk(rows){
   if(!hasCol("fail_reason")) return rows;
-  return rows.filter(r => !(r.fail_reason && String(r.fail_reason).includes(RISK_BLOCK_KEYWORD)));
+  return rows.filter(r => !failHaystack(r).includes(RISK_BLOCK_KEYWORD));
 }
 function excludeL3(rows){
   if(!hasCol("fail_reason")) return rows;
   return rows.filter(r => {
     if(r.fail_reason === null || r.fail_reason === undefined) return true; // isna -> 保留
-    const s = String(r.fail_reason);
+    const s = failHaystack(r);
     return !L3_FAIL_KEYWORDS.some(kw => s.includes(kw));
   });
 }
@@ -1209,7 +1222,7 @@ function toggleFilter(col,label,value){
   $("#drill").innerHTML="";
   recompute();
 }
-const DIM_LABEL={bin_country:"BIN国家",amount_range:"金额区间",payment_method:"支付方式",fail_reason:"失败原因"};
+const DIM_LABEL={bin_country:"BIN国家",amount_range:"金额区间",payment_method:"支付方式",fail_reason:"失败原因",channel:"通道"};
 
 /* ============================================================
    主渲染
@@ -1310,6 +1323,7 @@ function renderCharts(view){
 function renderDimTab(view,binAvail){
   const dims=[["payment_method","支付方式"],["amount_range","交易金额区间"]];
   if(binAvail) dims.push(["bin_country","支付卡BIN国家"]);
+  if(hasDimData(view,"channel")) dims.push(["channel","通道（收单机构）"]);
   if(!dims.some(d=>d[0]===state.dimSel)) state.dimSel=dims[0][0];
   const [col,label]=dims.find(d=>d[0]===state.dimSel);
   const gm=groupMetric(view,col,col==="amount_range"?AMOUNT_LABELS:null);
