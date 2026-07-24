@@ -1241,6 +1241,7 @@ const DIM_LABEL={bin_country:"BIN国家",amount_range:"金额区间",payment_met
 function recompute(){
   const {curr,last,warn}=periodRows();
   const view=viewOf(curr), lastView=last?viewOf(last):null;
+  state._lastView=lastView;
   renderChips(warn);
   renderKPIs(view,lastView,curr,last);
   renderCharts(view);
@@ -1325,13 +1326,14 @@ function renderCharts(view){
   host.appendChild(bar);
   bar.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.tab=b.dataset.tab;renderCharts(state._view);}));
 
-  if(state.tab==="dim") renderDimTab(view,binAvail);
+  const lastView = state.tmode==="compare" ? state._lastView : null;
+  if(state.tab==="dim") renderDimTab(view,binAvail,lastView);
   else if(state.tab==="fail"){ paretoCard(view,"col-12"); if(isAmt()) recoverableCard(view); }
-  else if(state.tab==="trend"){ trendCard(view); timeHeatCard(view); }
+  else if(state.tab==="trend"){ if(lastView&&lastView.length) trendCompareCard(view,lastView); else trendCard(view); timeHeatCard(view); }
   else if(state.tab==="cross") matrixCard(view,binAvail);
 }
 
-function renderDimTab(view,binAvail){
+function renderDimTab(view,binAvail,lastView){
   const dims=[["payment_method","支付方式"],["amount_range","交易金额区间"]];
   if(binAvail) dims.push(["bin_country","支付卡BIN国家"]);
   if(hasDimData(view,"channel")) dims.push(["channel","通道（收单机构）"]);
@@ -1341,14 +1343,22 @@ function renderDimTab(view,binAvail){
   const sel=`<select id="dimSel" style="margin-left:8px">${dims.map(d=>`<option value="${d[0]}" ${d[0]===state.dimSel?"selected":""}>${esc(d[1])}</option>`).join("")}</select>`;
   dimBarCard(gm,label,col,"col-7",sel);
   impactCard(view, binAvail?groupMetric(view,"bin_country",null):null, groupMetric(view,"amount_range",AMOUNT_LABELS), groupMetric(view,"payment_method",null), binAvail, "col-5");
-  dimTableCard(gm,label,col);
+  dimTableCard(gm,label,col,lastView);
   const ds=$("#dimSel"); if(ds) ds.addEventListener("change",e=>{state.dimSel=e.target.value;renderCharts(state._view);});
 }
-function dimTableCard(gm,label,col){
+function dimTableCard(gm,label,col,lastView){
+  const compare = lastView && lastView.length;
+  const lastRate = compare ? new Map(groupMetric(lastView,col,col==="amount_range"?AMOUNT_LABELS:null).rows.map(r=>[r.v,r.rate])) : null;
   const c=card("col-12",`<div class="chart-head"><span class="t">${esc(label)} · 明细</span><span class="s">点行=筛选此项</span></div>`);
   const rows=gm.rows.slice().sort((a,b)=>a.impact-b.impact);
-  let h=`<div class="tbl-scroll"><table class="grid-tbl"><thead><tr><th>${esc(label)}</th><th>交易量</th><th>交易额</th><th>占比</th><th>成功</th><th>${isAmt()?'金额成功率':'通过率'}</th><th>影响力</th></tr></thead><tbody>`;
-  for(const r of rows) h+=`<tr data-v="${esc(r.v)}" style="cursor:pointer"><td>${esc(r.v===""?"（空）":r.v)}</td><td class="tabnums">${nfmt(r.n)}</td><td class="tabnums">${money(r.amt)}</td><td class="tabnums">${r.share}%</td><td class="tabnums">${nfmt(r.succ)}</td><td class="tabnums">${r.rate}%</td><td class="tabnums">${r.impact}</td></tr>`;
+  const rt=isAmt()?'金额成功率':'通过率';
+  let h=`<div class="tbl-scroll"><table class="grid-tbl"><thead><tr><th>${esc(label)}</th><th>交易量</th><th>交易额</th><th>占比</th><th>成功</th><th>${rt}</th>${compare?`<th>上期${rt}</th><th>环比</th>`:""}<th>影响力</th></tr></thead><tbody>`;
+  for(const r of rows){
+    let cmpCells="";
+    if(compare){ const lr=lastRate.has(r.v)?lastRate.get(r.v):null; const d=lr!=null?r2(r.rate-lr):null;
+      cmpCells=`<td class="tabnums">${lr!=null?lr+"%":"—"}</td><td class="tabnums" style="${d!=null?(d>=0?"color:var(--good)":"color:var(--critical)"):""}">${d!=null?(d>=0?"▲":"▼")+Math.abs(d)+"pt":"—"}</td>`; }
+    h+=`<tr data-v="${esc(r.v)}" style="cursor:pointer"><td>${esc(r.v===""?"（空）":r.v)}</td><td class="tabnums">${nfmt(r.n)}</td><td class="tabnums">${money(r.amt)}</td><td class="tabnums">${r.share}%</td><td class="tabnums">${nfmt(r.succ)}</td><td class="tabnums">${r.rate}%</td>${cmpCells}<td class="tabnums">${r.impact}</td></tr>`;
+  }
   h+=`</tbody></table></div>`;
   const body=document.createElement("div"); body.innerHTML=h; c.appendChild(body);
   body.querySelectorAll("tr[data-v]").forEach(tr=>tr.addEventListener("click",()=>toggleFilter(col,DIM_LABEL[col],tr.dataset.v)));
@@ -1485,6 +1495,49 @@ function trendCard(view){
     bindTip(hit,()=>`<b>${e.k}</b>${tipRows([[isAmt()?"交易额":"交易量",isAmt()?money(e.amt):nfmt(e.n)],["成功率",rate(e)+"%"]])}`);
     svg.appendChild(hit);});
   body.appendChild(svg);
+}
+
+/* 成功率趋势 · 本期 vs 上期（按“期内第N天”对齐的两条线，仿 Stripe） */
+function daySeries(rows){
+  const m=new Map();
+  for(const r of rows){const d=r.pay_time;const k=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    let e=m.get(k);if(!e){e={k,date:new Date(d.getFullYear(),d.getMonth(),d.getDate()),n:0,succ:0,amt:0,sA:0};m.set(k,e);}
+    const a=+r.amount||0;e.n++;e.amt+=a;if(r.status===STATUS_SUCCESS){e.succ++;e.sA+=a;}}
+  return [...m.values()].sort((a,b)=>a.date-b.date);
+}
+function trendCompareCard(view,lastView){
+  const cur=daySeries(view), last=daySeries(lastView);
+  const c=card("col-12",`<div class="chart-head"><span class="t">成功率趋势 · 本期 vs 上期（${isAmt()?'金额口径':'笔数口径'}）</span><span class="s">按期内第 N 天对齐</span></div>`);
+  const body=document.createElement("div"); c.appendChild(body);
+  if(cur.length<2 && last.length<2){ body.innerHTML='<div class="empty">本期/上期天数不足，暂无趋势对比</div>'; return; }
+  const rate=e=>isAmt()?(e.amt>0?r2(e.sA/e.amt*100):0):(e.n>0?r2(e.succ/e.n*100):0);
+  const n=Math.max(cur.length,last.length);
+  const W=Math.max(body.clientWidth||900,520),padL=42,padR=14,padT=14,padB=30,H=210;
+  const plotW=W-padL-padR,plotH=H-padT-padB,step=plotW/(n>1?n-1:1);
+  const svg=E("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
+  [0,50,100].forEach(t=>{const y=padT+plotH*(1-t/100);svg.appendChild(E("line",{x1:padL,y1:y,x2:W-padR,y2:y,class:"grid-l"}));svg.appendChild(E("text",{x:padL-6,y:y+3,"text-anchor":"end",class:"lab sm"},t+"%"));});
+  const line=(series,color,dash)=>{
+    if(series.length<1) return;
+    const pts=series.map((e,i)=>[padL+i*step,padT+plotH*(1-rate(e)/100)]);
+    if(pts.length>1){let d="";pts.forEach((p,i)=>d+=(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)+" ");
+      svg.appendChild(E("path",Object.assign({d,fill:"none",stroke:color,"stroke-width":2},dash?{"stroke-dasharray":"4 3"}:{})));}
+    series.forEach((e,i)=>{const p=pts[i];svg.appendChild(E("circle",{cx:p[0],cy:p[1],r:3,fill:color,stroke:"var(--surface)","stroke-width":2}));});
+  };
+  line(last,"var(--muted)",true);
+  line(cur,"var(--series)",false);
+  // x 轴：第N天 + 悬停对齐两期
+  for(let i=0;i<n;i++){
+    const x=padL+i*step;
+    if(n<=14||i%Math.ceil(n/12)===0||i===n-1) svg.appendChild(E("text",{x,y:H-12,"text-anchor":"middle",class:"lab sm"},"第"+(i+1)+"天"));
+    const hit=E("rect",{x:x-step/2,y:padT,width:step,height:plotH,class:"hit"});
+    const cd=cur[i],ld=last[i];
+    bindTip(hit,()=>`<b>第 ${i+1} 天</b>${tipRows([
+      ["本期"+(cd?"("+(cd.date.getMonth()+1)+"/"+cd.date.getDate()+")":""), cd?rate(cd)+"%":"—"],
+      ["上期"+(ld?"("+(ld.date.getMonth()+1)+"/"+ld.date.getDate()+")":""), ld?rate(ld)+"%":"—"]])}`);
+    svg.appendChild(hit);
+  }
+  body.appendChild(svg);
+  c.insertAdjacentHTML("beforeend",`<div class="legend"><span><i style="background:var(--series)"></i>本期</span><span><i style="background:var(--muted)"></i>上期（虚线）</span></div>`);
 }
 
 /* 时段 × 星期 成功率热力 */
