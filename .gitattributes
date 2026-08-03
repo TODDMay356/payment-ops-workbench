@@ -1,0 +1,7 @@
+# .vbs 存成 UTF-16LE + BOM + CRLF —— Windows Script Host 靠 BOM 才认 Unicode，
+# 否则会按系统 ANSI(GBK) 去解，中文注释变乱码，报「无效字符 800A0408」。
+# 标成 binary 是为了不让 git 做换行转换 / 编码猜测把文件改坏。
+*.vbs binary
+
+# .bat 必须是 CRLF，否则命令会被当成一整行
+*.bat text eol=crlf
