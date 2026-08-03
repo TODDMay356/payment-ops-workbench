@@ -435,6 +435,25 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           <button class="btn ghost" id="dlBc">下载</button>
         </div>
         <pre class="out" id="bcOut"></pre>
+
+        <div class="subhead" style="margin-top:18px">AI 总结 <span class="hint" id="aiHint"></span></div>
+        <p class="lead" style="margin-bottom:10px">把上面的播报素材 + 分层归因结论交给大模型，让它写一段可直接用的分析。
+          周报 / 月报用得最多 —— 那两个周期不推群、不写底账，看的就是这段总结。</p>
+        <div class="row-btns">
+          <button class="btn" id="aiBtn">生成 AI 总结</button>
+          <button class="btn ghost" id="aiCopy">复制提示词</button>
+          <input type="password" id="aiKey" placeholder="AI Key（直连用，不保存）" style="flex:1;min-width:170px">
+        </div>
+        <div class="status" id="aiStatus"></div>
+        <details id="aiManual" style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--ink-2)">手动跑（复制提示词 → 粘到任意大模型 → 把回答粘回来）</summary>
+          <textarea id="aiPromptOut" readonly placeholder="点「复制提示词」后，完整提示词会显示在这里"
+                    style="width:100%;min-height:110px;margin-top:8px;font:inherit;font-size:12px"></textarea>
+          <textarea id="aiPaste" placeholder="把大模型的回答粘贴到这里"
+                    style="width:100%;min-height:110px;margin-top:8px;font:inherit;font-size:12px"></textarea>
+          <button class="btn" id="aiApply" style="margin-top:8px">应用粘贴的总结</button>
+        </details>
+        <pre class="out" id="aiOut" hidden></pre>
       </div>
     </div>
 
@@ -1911,6 +1930,99 @@ $('#copyBc').addEventListener('click', async()=>{
 $('#dlBc').addEventListener('click', ()=>{
   const d=state.data; download(`${P().unit}报播报_${d.tDate}.${bcMode}`, bcMode==='txt'?state.bc.txt:state.bc.md);
 });
+/* ---- AI 总结 ----
+   提示词主体直接用 state.bc.md（播报素材已经是整理好的本期异常摘要），
+   不另起一套数据组装。工作台托管时走代转，直连打开时退回填 key / 手动粘贴。 */
+const WB_AI = { available:false, endpoint:'', model:'' };
+
+function buildAIPrompt(){
+  const d=state.data; if(!d) return '';
+  const n=anomalyCount();
+  return [
+    `你是一名支付业务数据分析师。下面是「${d.period||PERIOD}」的转化率巡检结果，`,
+    `本期 ${d.tDate}，对比期 ${d.yDate}，共检出 ${n} 项异常。`,
+    '',
+    '请只依据下面给出的数据作答，不要编造未提供的数字。输出：',
+    '1. 一句话结论（本期整体是好是坏，最该关注什么）',
+    '2. 按影响从大到小列出关键变化，指明是哪个来源、哪个环节',
+    '3. 可能的原因方向和建议排查动作（明确区分「数据支持的推断」和「需要进一步验证的猜测」）',
+    '4. 如果本期平稳，直接说平稳，不要硬凑问题',
+    '',
+    '===== 播报素材 =====',
+    (state.bc && state.bc.md) || '（无）',
+    '===== 数据结束 =====',
+  ].join('\n');
+}
+
+function applyAISummary(text){
+  const out=$('#aiOut');
+  out.hidden=false; out.textContent=text;
+}
+
+async function aiViaWorkbench(prompt){
+  const r=await fetch(WB_AI.endpoint||'/api/ai/summary',{method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt})});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok || !data.ok) throw new Error(data.msg || ('工作台返回 '+r.status));
+  return (data.content||'').trim();
+}
+
+async function aiDirect(prompt, key){
+  const r=await fetch('https://api.deepseek.com/chat/completions',{method:'POST',
+    headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},
+    body:JSON.stringify({model:'deepseek-chat',max_tokens:2000,stream:false,messages:[
+      {role:'system',content:'你是一名专业、谨慎、只依据给定数据说话的支付数据分析师。'},
+      {role:'user',content:prompt}]})});
+  if(!r.ok) throw new Error('接口返回 '+r.status+'：'+(await r.text()).slice(0,200));
+  const data=await r.json();
+  const c=data && data.choices && data.choices[0] && data.choices[0].message
+        && (data.choices[0].message.content||'').trim();
+  if(!c) throw new Error('返回格式异常');
+  return c;
+}
+
+$('#aiBtn').addEventListener('click', async ()=>{
+  const st=$('#aiStatus');
+  if(!state.data){ st.className='status err'; st.textContent='请先上传并解析文件。'; return; }
+  const key=$('#aiKey').value.trim();
+  if(!WB_AI.available && !key){
+    st.className='status err';
+    st.textContent='请填写 AI Key；或在 config.json 的 ai.api_key 里配好，由工作台代转（不用填、也不会被 CORS 拦）。';
+    return;
+  }
+  const btn=$('#aiBtn'), label=btn.textContent;
+  btn.disabled=true; btn.textContent='生成中…';
+  st.className='status'; st.textContent = WB_AI.available
+    ? `正在经工作台调用 ${WB_AI.model||'AI'} …` : '正在直连 api.deepseek.com …';
+  const prompt=buildAIPrompt();
+  try{
+    const content = WB_AI.available ? await aiViaWorkbench(prompt) : await aiDirect(prompt, key);
+    applyAISummary(content);
+    st.className='status ok'; st.textContent='✅ 已生成';
+  }catch(err){
+    st.className='status err';
+    st.textContent='AI 总结失败：'+(err.message||String(err))+'　已打开下方「手动跑」作为退路。';
+    $('#aiManual').open=true; $('#aiPromptOut').value=prompt;
+  }finally{ btn.disabled=false; btn.textContent=label; }
+});
+
+$('#aiCopy').addEventListener('click', async ()=>{
+  if(!state.data){ $('#aiStatus').className='status err'; $('#aiStatus').textContent='请先上传并解析文件。'; return; }
+  const prompt=buildAIPrompt();
+  $('#aiManual').open=true; $('#aiPromptOut').value=prompt;
+  try{ await navigator.clipboard.writeText(prompt);
+       $('#aiStatus').className='status ok'; $('#aiStatus').textContent='提示词已复制，粘到任意大模型即可。'; }
+  catch(e){ $('#aiPromptOut').select();
+       $('#aiStatus').className='status'; $('#aiStatus').textContent='请在下方框中手动全选复制。'; }
+});
+
+$('#aiApply').addEventListener('click', ()=>{
+  const v=$('#aiPaste').value.trim();
+  if(!v){ $('#aiStatus').className='status err'; $('#aiStatus').textContent='请先把大模型的回答粘进来。'; return; }
+  applyAISummary(v);
+  $('#aiStatus').className='status ok'; $('#aiStatus').textContent='✅ 已应用粘贴的总结';
+});
+
 $('#chainSel').addEventListener('change', e=>drawChain(+e.target.value));
 $('#export').addEventListener('click', exportExcel);
 
@@ -2112,6 +2224,20 @@ let FS_MANAGED=false;
   $('#fsToken').value     = 'managed_by_workbench';   // 工作台自己加 Bearer，这里只是占位
   $('#fsSecret').value    = '';                        // 签名由工作台做
   if(cfg.card) $('#fsCardMode').checked=true;
+
+  // AI 也由工作台代转：key 在服务端，不用填、也不会被 CORS 拦
+  if(cfg.ai && cfg.ai.available){
+    WB_AI.available=true;
+    WB_AI.endpoint=cfg.ai.endpoint||'/api/ai/summary';
+    WB_AI.model=cfg.ai.model||'';
+    const k=$('#aiKey');
+    if(k){ k.value=''; k.readOnly=true; k.style.opacity=.5;
+           k.placeholder='由工作台托管，无需填写'; k.title='key 存在工作台的 config.json 里'; }
+    const h=$('#aiHint'); if(h) h.textContent='· 由工作台代转 '+(cfg.ai.model||'');
+  }else{
+    const h=$('#aiHint');
+    if(h) h.textContent='· 未配置 AI key（在 config.json 的 ai.api_key 填好即可免填 key）';
+  }
 
   FS_KEYS.forEach(k=>{ const el=$('#'+k); if(el){ el.readOnly=true; el.style.opacity=.6; el.title='由工作台统一管理'; } });
 

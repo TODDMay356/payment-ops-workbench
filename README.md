@@ -24,6 +24,7 @@
 | `feishu.webhook.team` | 团队群 → 设置 → 群机器人 → 自定义机器人。勾"签名校验"会给你 secret |
 | `feishu.webhook.personal` | 同上，建一个只有你和机器人的群。两个填成同一个 URL 也行，工作台会去重 |
 | `feishu.bitable` | 多维表格 URL `https://xxx.feishu.cn/base/APP_TOKEN?table=TABLE_ID` 里的两段 |
+| `ai.api_key` | （可选）DeepSeek 等 OpenAI 兼容服务的 key。填了之后两个工具页的「AI 总结」就不用再手输 key，也不会被浏览器 CORS 拦 —— 由工作台代转。换别家只改 `base_url` 和 `model` |
 | `order_monitor.dir` | 出单监控脚本所在目录 |
 | `order_monitor.mode` | `both` = 一次运行同时发群通知和 BD 私聊（默认）；`group` / `dm` = 只发一边 |
 
@@ -146,6 +147,13 @@ A: 不用。工具页启动时会拉 `/api/workbench/bootstrap`，自动填好�
 A: **不会。** 解析、切周期、换对比日期都不发任何东西，只有点「推送异常到飞书」
 或「写入多维表格」才发。发之前看一眼「本次要发的内容」那行确认是哪一期。
 （以前是解析完自动同步的，但加了日期筛选后，换一次对比日期就会同步一次 —— 所以取消了。）
+
+**Q: AI 总结在哪？还要填 key 吗？**
+A: 转化率工具在「播报素材」面板底部，商户工具在「详细报表」里。
+`config.json` 的 `ai.api_key` 填好后**两个页面都不用再填 key** —— 请求走工作台代转，
+key 只留在服务端，也不会被浏览器 CORS 拦（以前直连 `api.deepseek.com` 基本必然被拦，
+只能靠「复制提示词 → 粘到大模型 → 把回答粘回来」）。
+没配 key 时自动退回原来的手动模式，页面会提示去哪配。
 
 **Q: 怎么比非最近两期的数据？**
 A: 顶部周期按钮旁边有「本期 / 对比」两个下拉，列出当前文件里该周期的所有日期，任选两期。

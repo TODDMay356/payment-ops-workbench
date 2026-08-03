@@ -484,6 +484,33 @@ const AI_BASE_URL = "https://api.deepseek.com";
 const AI_MODEL = "deepseek-v4-pro";
 const AI_MAX_TOKENS = 2000;
 
+/* 本页被工作台托管时，AI 调用改走工作台代转：
+   key 留在服务端的 config.json，也不会被浏览器 CORS 拦。
+   直接打开本文件（离线单文件版）时这个请求会失败，自动退回原来的直连 + 手动兜底。 */
+const WB_AI = { available:false, endpoint:'', model:'' };
+(async function bootstrapAI(){
+  try{
+    const r = await fetch('/api/workbench/bootstrap', {cache:'no-store'});
+    if(!r.ok) return;
+    const cfg = await r.json();
+    if(!cfg || !cfg.managed || !cfg.ai || !cfg.ai.available) return;
+    WB_AI.available = true;
+    WB_AI.endpoint  = cfg.ai.endpoint || '/api/ai/summary';
+    WB_AI.model     = cfg.ai.model || '';
+  }catch(e){ return; }
+
+  // 托管模式下不用再填 key / 接口地址
+  ['aiKey','aiUrl'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.value=''; el.readOnly=true; el.style.opacity=.5;
+    el.placeholder='由工作台托管，无需填写';
+    el.title='key 存在工作台的 config.json 里';
+  });
+  const btn=document.getElementById('aiBtn');
+  if(btn) btn.textContent='AI 总结';
+})();
+
 /* ============================================================
    小工具
    ============================================================ */
@@ -1671,33 +1698,58 @@ function buildAIPrompt(){
     "\n\n===== 关键明细表 =====\n"+parts.join("\n\n")+"\n===== 数据结束 =====";
 }
 
+/** 经工作台代转：key 在服务端，不会被 CORS 拦 */
+async function aiViaWorkbench(prompt){
+  const resp=await fetch(WB_AI.endpoint||'/api/ai/summary',{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({prompt, max_tokens:AI_MAX_TOKENS})});
+  const data=await resp.json().catch(()=>({}));
+  if(!resp.ok || !data.ok) throw new Error(data.msg || ("工作台返回 "+resp.status));
+  return (data.content||"").trim();
+}
+
+/** 浏览器直连（离线单文件版走这条，多半会被 CORS 拦，拦了就落到手动兜底） */
+async function aiDirect(prompt, key){
+  const base=($("#aiUrl").value.trim()||AI_BASE_URL).replace(/\/$/,"");
+  const resp=await fetch(base+"/chat/completions",{method:"POST",
+    headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
+    body:JSON.stringify({model:AI_MODEL,max_tokens:AI_MAX_TOKENS,stream:false,messages:[
+      {role:"system",content:"你是一名专业、谨慎、只依据给定数据说话的支付数据分析师。"},{role:"user",content:prompt}]})});
+  if(!resp.ok) throw new Error("接口返回 "+resp.status+"："+(await resp.text()).slice(0,200));
+  const data=await resp.json(); const content=data?.choices?.[0]?.message?.content?.trim();
+  if(!content) throw new Error("返回格式异常");
+  return content;
+}
+
 async function runAI(){
-  const key=$("#aiKey").value.trim();
-  if(!key){ $("#aiResult").innerHTML='<div class="banner warn">请先填写 API Key</div>'; return; }
   if(!REPORT_SHEETS.length) buildReport();
   if(!REPORT_CONCL.length){ $("#aiResult").innerHTML='<div class="banner warn">当前无可分析的结论</div>'; return; }
-  const btn=$("#aiBtn"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>生成中…';
-  const base=($("#aiUrl").value.trim()||AI_BASE_URL).replace(/\/$/,"");
-  $("#aiResult").innerHTML='<div class="banner">正在直连 '+esc(base)+' …</div>';
+  const key=$("#aiKey").value.trim();
+  if(!WB_AI.available && !key){
+    $("#aiResult").innerHTML='<div class="banner warn">请先填写 API Key；'
+      + '或把本页放到工作台里打开（工作台会用 config.json 里的 key 代转，不用填也不会被 CORS 拦）。</div>';
+    return;
+  }
+  const btn=$("#aiBtn"); const label=btn.textContent;
+  btn.disabled=true; btn.innerHTML='<span class="spin"></span>生成中…';
+  $("#aiResult").innerHTML='<div class="banner">'
+    + (WB_AI.available ? '正在经工作台调用 '+esc(WB_AI.model||'AI')+' …' : '正在直连 '+esc($("#aiUrl").value.trim()||AI_BASE_URL)+' …')
+    + '</div>';
   const prompt=buildAIPrompt();
   try{
-    const resp=await fetch(base+"/chat/completions",{method:"POST",
-      headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
-      body:JSON.stringify({model:AI_MODEL,max_tokens:AI_MAX_TOKENS,stream:false,messages:[
-        {role:"system",content:"你是一名专业、谨慎、只依据给定数据说话的支付数据分析师。"},{role:"user",content:prompt}]})});
-    if(!resp.ok) throw new Error("接口返回 "+resp.status+"："+(await resp.text()).slice(0,200));
-    const data=await resp.json(); const content=data?.choices?.[0]?.message?.content?.trim();
-    if(!content) throw new Error("返回格式异常");
+    const content = WB_AI.available ? await aiViaWorkbench(prompt) : await aiDirect(prompt, key);
     AISHEET=content.split("\n");
     $("#aiResult").innerHTML='<div class="banner ok">AI 总结已生成（导出 Excel 会一并包含）</div><pre class="concl">'+esc(content)+'</pre>';
   }catch(err){
-    if(String(err).includes("Failed to fetch")){
+    if(!WB_AI.available && String(err).includes("Failed to fetch")){
       $("#aiManual").open=true; $("#aiPromptOut").value=prompt;
       $("#aiResult").innerHTML='<div class="banner warn">直连被拦截（浏览器 CORS：该接口不允许网页直连，离线 file:// 尤其如此）。已为你打开下方「手动跑」：<b>复制提示词</b> → 粘到任意大模型（DeepSeek 网页/ChatGPT/豆包…）→ 把回答粘回来即可。规则图表与报表不受影响。</div>';
     } else {
-      $("#aiResult").innerHTML='<div class="banner err">AI 总结失败：'+esc(err.message||String(err))+'</div>';
+      $("#aiManual").open=true; $("#aiPromptOut").value=prompt;
+      $("#aiResult").innerHTML='<div class="banner err">AI 总结失败：'+esc(err.message||String(err))
+        + '<br>已为你打开下方「手动跑」作为退路。</div>';
     }
-  }finally{ btn.disabled=false; btn.textContent="直连生成"; }
+  }finally{ btn.disabled=false; btn.textContent=label||"直连生成"; }
 }
 function ensureReport(){ if(!REPORT_SHEETS.length) buildReport(); return REPORT_CONCL.length>0; }
 async function copyPrompt(){

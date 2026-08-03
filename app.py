@@ -35,6 +35,8 @@ from flask import (
 )
 from werkzeug.exceptions import HTTPException
 
+import requests
+
 import feishu
 import jobs
 
@@ -220,7 +222,76 @@ def bootstrap():
             "table_id": b.get("table_id") or "workbench",
         },
         "card": True,
+        # 工具页据此决定要不要显示「AI 总结」按钮、要不要还让用户填 key
+        "ai": {
+            "available": bool((config.get("ai") or {}).get("api_key")),
+            "model": (config.get("ai") or {}).get("model") or "deepseek-chat",
+            "endpoint": f"{base}/api/ai/summary",
+        },
     })
+
+
+@app.route("/api/ai/summary", methods=["POST"])
+def ai_summary():
+    """
+    AI 总结代转。和飞书那套一个思路：key 只存在 config.json，
+    浏览器只管把提示词发过来。
+
+    解决两件事：
+      1. 浏览器直连 api.deepseek.com 会被 CORS 拦（离线 file:// 必然失败），
+         以前只能靠「复制提示词 → 粘到大模型 → 把回答粘回来」这条人工退路
+      2. 以前每次都要在页面上手输 API Key
+    """
+    ai = config.get("ai") or {}
+    key = ai.get("api_key") or ""
+    if not key:
+        abort(400, description="未配置 AI key。请在 config.json 的 ai.api_key 填入后重启工作台；"
+                               "或继续用页面上的「复制提示词」手动跑。")
+
+    body = request.get_json(silent=True) or {}
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        abort(400, description="缺少 prompt")
+
+    base = (ai.get("base_url") or "https://api.deepseek.com").rstrip("/")
+    payload = {
+        "model": ai.get("model") or "deepseek-chat",
+        "max_tokens": int(body.get("max_tokens") or ai.get("max_tokens") or 2000),
+        "stream": False,
+        "messages": [
+            {"role": "system",
+             "content": body.get("system") or "你是一名专业、谨慎、只依据给定数据说话的支付数据分析师。"},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    try:
+        r = requests.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=int(ai.get("timeout") or 120),
+        )
+    except Exception as e:
+        _record("ai", False, f"调用失败：{e}")
+        return jsonify({"ok": False, "msg": f"连接 {base} 失败：{e}"}), 502
+
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text[:500]}
+
+    content = ""
+    try:
+        content = (data["choices"][0]["message"]["content"] or "").strip()
+    except Exception:
+        pass
+    if not content:
+        msg = (data.get("error") or {}).get("message") or json.dumps(data, ensure_ascii=False)[:200]
+        _record("ai", False, f"返回异常：{msg}")
+        return jsonify({"ok": False, "msg": f"AI 返回异常（HTTP {r.status_code}）：{msg}"}), 502
+
+    _record("ai", True, f"{payload['model']} 生成 {len(content)} 字")
+    return jsonify({"ok": True, "content": content, "model": payload["model"]})
 
 
 def _client_or_503():
