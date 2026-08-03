@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>跨境支付运营工作台</title>
+  <style>
+  /* ============================================================
+     设计 token
+     颜色：品牌蓝只用在主操作和激活轨；饱和度只给状态，不给装饰。
+     灰阶统一偏冷（hue 220），跟品牌蓝同族，不用中性纯灰。
+     排版：中文走系统栈；所有数字/时间/状态走等宽 + tabular-nums，
+           让下面的运行记录读起来像一份值班日志，而不是一堆卡片。
+     ============================================================ */
+  :root{
+    --accent:#1664ff;  --accent-ink:#0b47b8;  --accent-wash:#eaf1ff;
+    --ok:#0f9d63;      --ok-wash:#e6f5ee;
+    --warn:#b7791f;    --warn-wash:#fdf4e3;
+    --crit:#d64541;    --crit-wash:#fdedec;
+
+    --paper:#fafbfd;   --surface:#ffffff;  --surface-2:#f4f6fa;
+    --line:#e3e8f0;    --line-strong:#cbd4e2;
+    --ink:#12161f;     --ink-2:#455065;    --ink-3:#7a8699;
+
+    --r-s:6px; --r-m:10px; --r-l:14px;
+    --shadow:0 1px 2px rgba(18,22,31,.04), 0 6px 20px rgba(18,22,31,.05);
+    --ui:"PingFang SC","Microsoft YaHei","Hiragino Sans GB",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --t:140ms cubic-bezier(.4,0,.2,1);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --accent:#5b8dff; --accent-ink:#a8c4ff; --accent-wash:#16213c;
+      --ok:#3fbc86;     --ok-wash:#12281f;
+      --warn:#d9a441;   --warn-wash:#2b2313;
+      --crit:#ef6f6b;   --crit-wash:#2e1817;
+
+      --paper:#0e1218;  --surface:#161b24; --surface-2:#1d232e;
+      --line:#272f3d;   --line-strong:#3a4456;
+      --ink:#e8ecf3;    --ink-2:#a3aec1;   --ink-3:#727e93;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.28);
+    }
+  }
+  /* 主题按钮要能双向压过媒体查询 */
+  :root[data-theme="dark"]{
+    --accent:#5b8dff; --accent-ink:#a8c4ff; --accent-wash:#16213c;
+    --ok:#3fbc86;     --ok-wash:#12281f;
+    --warn:#d9a441;   --warn-wash:#2b2313;
+    --crit:#ef6f6b;   --crit-wash:#2e1817;
+    --paper:#0e1218;  --surface:#161b24; --surface-2:#1d232e;
+    --line:#272f3d;   --line-strong:#3a4456;
+    --ink:#e8ecf3;    --ink-2:#a3aec1;   --ink-3:#727e93;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.28);
+  }
+  :root[data-theme="light"]{
+    --accent:#1664ff; --accent-ink:#0b47b8; --accent-wash:#eaf1ff;
+    --ok:#0f9d63;     --ok-wash:#e6f5ee;
+    --warn:#b7791f;   --warn-wash:#fdf4e3;
+    --crit:#d64541;   --crit-wash:#fdedec;
+    --paper:#fafbfd;  --surface:#ffffff; --surface-2:#f4f6fa;
+    --line:#e3e8f0;   --line-strong:#cbd4e2;
+    --ink:#12161f;    --ink-2:#455065;   --ink-3:#7a8699;
+    --shadow:0 1px 2px rgba(18,22,31,.04), 0 6px 20px rgba(18,22,31,.05);
+  }
+
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:var(--ui); font-size:14px; line-height:1.6;
+    background:var(--paper); color:var(--ink);
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
+  @media (prefers-reduced-motion:reduce){ *{animation:none!important; transition:none!important} }
+
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+
+  /* ---------- 骨架 ---------- */
+  .app{display:flex; height:100vh; overflow:hidden}
+
+  /* 图标轨：原来是 220px 侧边栏，4 个入口白占三分之一屏 */
+  .rail{
+    width:56px; flex-shrink:0; background:var(--surface);
+    border-right:1px solid var(--line);
+    display:flex; flex-direction:column; align-items:center;
+    padding:12px 0 10px; gap:4px;
+  }
+  .rail .mark{
+    width:32px; height:32px; border-radius:9px; background:var(--accent);
+    color:#fff; font-weight:800; font-size:15px; margin-bottom:12px;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .rail button{
+    width:40px; height:40px; border:0; background:none; cursor:pointer;
+    border-radius:var(--r-m); color:var(--ink-3); font-size:17px;
+    display:flex; align-items:center; justify-content:center;
+    position:relative; transition:var(--t);
+  }
+  .rail button svg{width:19px; height:19px; fill:none; stroke:currentColor;
+                   stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round}
+  .rail button:hover{background:var(--surface-2); color:var(--ink)}
+  .rail button[aria-current="true"]{background:var(--accent-wash); color:var(--accent)}
+  .rail button[aria-current="true"]::before{
+    content:''; position:absolute; left:-8px; top:9px; bottom:9px;
+    width:3px; border-radius:0 3px 3px 0; background:var(--accent);
+  }
+  .rail .spacer{flex:1}
+  .rail .tip{
+    position:absolute; left:52px; white-space:nowrap; background:var(--ink); color:var(--paper);
+    font-size:12px; padding:4px 9px; border-radius:var(--r-s); pointer-events:none;
+    opacity:0; transform:translateX(-4px); transition:var(--t); z-index:50;
+  }
+  .rail button:hover .tip{opacity:1; transform:translateX(0)}
+
+  .main{flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden}
+
+  /* ---------- 首页 ---------- */
+  #homeView{flex:1; overflow-y:auto; padding:26px 28px 72px}
+  #homeView[hidden]{display:none}
+  .wrap{max-width:940px; margin:0 auto; display:flex; flex-direction:column; gap:18px}
+
+  .head{display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap}
+  .head h1{font-size:19px; font-weight:700; letter-spacing:-.01em; text-wrap:balance}
+  .head .sub{font-size:12.5px; color:var(--ink-3); margin-top:1px}
+  .head .now{font-size:12px; color:var(--ink-3); text-align:right}
+  .head .now b{display:block; font-size:19px; font-weight:600; color:var(--ink-2); line-height:1.15}
+
+  /* 系统状态：默认一行；出问题才展开 */
+  .sys{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-m); overflow:hidden}
+  .sys-bar{
+    display:flex; align-items:center; gap:10px; padding:10px 14px;
+    cursor:pointer; width:100%; border:0; background:none; text-align:left;
+    font-family:inherit; font-size:13px; color:var(--ink);
+  }
+  .sys-bar:hover{background:var(--surface-2)}
+  .sys-bar .lamp{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex-shrink:0}
+  .sys-bar .lamp.ok{background:var(--ok); box-shadow:0 0 0 3px var(--ok-wash)}
+  .sys-bar .lamp.warn{background:var(--warn); box-shadow:0 0 0 3px var(--warn-wash)}
+  .sys-bar .lamp.crit{background:var(--crit); box-shadow:0 0 0 3px var(--crit-wash)}
+  .sys-bar .grow{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .sys-bar .caret{color:var(--ink-3); font-size:11px; transition:var(--t)}
+  .sys[data-open="1"] .sys-bar .caret{transform:rotate(180deg)}
+  .sys-detail{display:none; border-top:1px solid var(--line); padding:12px 14px;
+    grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:10px}
+  .sys[data-open="1"] .sys-detail{display:grid}
+  .stat{background:var(--surface-2); border-radius:var(--r-s); padding:9px 11px}
+  .stat .k{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-3); font-weight:600}
+  .stat .v{font-size:12.5px; font-weight:600; margin-top:2px; display:flex; align-items:center; gap:6px}
+  .stat .v .d{width:6px;height:6px;border-radius:50%;background:var(--ink-3);flex-shrink:0}
+  .stat .v .d.ok{background:var(--ok)} .stat .v .d.warn{background:var(--warn)} .stat .v .d.crit{background:var(--crit)}
+
+  /* 分节标题 */
+  .sec{display:flex; align-items:baseline; gap:10px; margin-top:6px}
+  .sec h2{font-size:12px; font-weight:700; letter-spacing:.1em; color:var(--ink-3)}
+  .sec .rule{flex:1; height:1px; background:var(--line)}
+
+  /* 动作块 */
+  .act{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-l);
+       box-shadow:var(--shadow); overflow:hidden}
+  .act-head{display:flex; align-items:center; gap:11px; padding:15px 18px}
+  .act-head .ico{
+    width:34px;height:34px;border-radius:9px;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;font-size:16px;
+    background:var(--accent-wash); color:var(--accent);
+  }
+  .act-head .ico.amber{background:var(--warn-wash); color:var(--warn)}
+  .act-head .t{flex:1; min-width:0}
+  .act-head .t h3{font-size:14.5px; font-weight:700}
+  .act-head .t p{font-size:12.5px; color:var(--ink-3); margin-top:1px}
+  .act-body{padding:0 18px 16px; display:flex; flex-direction:column; gap:12px}
+
+  .tags{display:flex; gap:6px; flex-wrap:wrap}
+  .tag{font-size:11px; font-weight:600; padding:2.5px 8px; border-radius:5px;
+       background:var(--surface-2); color:var(--ink-2); display:inline-flex; align-items:center; gap:5px}
+  .tag.on{background:var(--ok-wash); color:var(--ok)}
+  .tag.off{background:var(--warn-wash); color:var(--warn)}
+
+  /* 表单 */
+  .fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:10px}
+  .f{display:flex; flex-direction:column; gap:4px; min-width:0}
+  .f > span{font-size:11px; font-weight:600; color:var(--ink-3); letter-spacing:.02em}
+  .f input{
+    font-family:inherit; font-size:12.5px; color:var(--ink);
+    background:var(--surface-2); border:1px solid var(--line);
+    border-radius:var(--r-s); padding:7px 9px; width:100%; min-width:0;
+  }
+  .f input[type=file]{padding:5px 7px; cursor:pointer}
+  .f input[type=date]{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  .f input:focus{border-color:var(--accent); background:var(--surface)}
+  .f input::file-selector-button{
+    font-family:inherit; font-size:11.5px; border:1px solid var(--line-strong);
+    background:var(--surface); color:var(--ink-2); border-radius:5px;
+    padding:3px 9px; margin-right:8px; cursor:pointer;
+  }
+
+  .row{display:flex; gap:9px; align-items:center; flex-wrap:wrap}
+  .btn{
+    font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+    border:1px solid var(--line-strong); background:var(--surface); color:var(--ink-2);
+    border-radius:var(--r-s); padding:7.5px 15px; transition:var(--t);
+    display:inline-flex; align-items:center; gap:6px; white-space:nowrap; text-decoration:none;
+  }
+  .btn:hover{border-color:var(--ink-3); color:var(--ink)}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+  .btn.primary:hover{background:var(--accent-ink); border-color:var(--accent-ink)}
+  .btn:disabled{opacity:.55; cursor:not-allowed}
+  .btn.quiet{border-color:transparent; background:none; color:var(--ink-3); padding-left:0}
+  .btn.quiet:hover{color:var(--accent)}
+
+  /* 运行日志 */
+  .log{border:1px solid var(--line); border-radius:var(--r-m); overflow:hidden; background:var(--surface-2)}
+  .log[hidden]{display:none}
+  .log-head{display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line);
+            font-size:12px; font-weight:600; color:var(--ink-2)}
+  .log-head .st{margin-left:auto; font-family:var(--mono); font-size:11.5px; font-variant-numeric:tabular-nums}
+  .log-head .st.ok{color:var(--ok)} .log-head .st.err{color:var(--crit)} .log-head .st.run{color:var(--accent)}
+  .spin{width:9px;height:9px;border-radius:50%;background:var(--accent);animation:bp 1.1s ease-in-out infinite}
+  @keyframes bp{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+  .log-body{
+    font-family:var(--mono); font-size:11.5px; line-height:1.65; color:var(--ink-2);
+    padding:9px 12px; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+  }
+
+  /* 今日结果 */
+  .feed{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-m); overflow:hidden}
+  .feed .empty{padding:15px 16px; font-size:12.5px; color:var(--ink-3)}
+  .feed ol{list-style:none}
+  .feed li{display:flex; gap:10px; align-items:baseline; padding:9px 16px; border-top:1px solid var(--line); font-size:12.5px}
+  .feed li:first-child{border-top:0}
+  .feed li .tm{font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--ink-3); font-size:11.5px; flex-shrink:0}
+  .feed li .kd{font-size:11px; font-weight:700; padding:1px 7px; border-radius:4px; flex-shrink:0}
+  .feed li .kd.ok{background:var(--ok-wash); color:var(--ok)}
+  .feed li .kd.err{background:var(--crit-wash); color:var(--crit)}
+  .feed li .dt{color:var(--ink-2); min-width:0; overflow-wrap:anywhere}
+
+  .foot{display:flex; gap:14px; align-items:center; flex-wrap:wrap;
+        font-size:12px; color:var(--ink-3); padding-top:2px}
+  .foot code{font-family:var(--mono); background:var(--surface-2); padding:2px 6px; border-radius:4px; font-size:11px}
+
+  /* ---------- 工具 iframe ---------- */
+  #toolView{flex:1; display:flex; flex-direction:column; overflow:hidden}
+  #toolView[hidden]{display:none}
+  .tool-bar{display:flex; align-items:center; gap:11px; padding:9px 16px;
+            background:var(--surface); border-bottom:1px solid var(--line); flex-shrink:0}
+  .tool-bar .ttl{font-size:13.5px; font-weight:700}
+  #toolFrame{flex:1; width:100%; border:0; background:var(--surface)}
+
+  @media (max-width:640px){
+    #homeView{padding:18px 14px 60px}
+    .head .now{display:none}
+  }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <nav class="rail" aria-label="主导航">
+    <div class="mark" aria-hidden="true">支</div>
+    <button type="button" data-nav="home" aria-current="true" aria-label="工作台">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="2.5" width="6.5" height="6.5" rx="1.5"/><rect x="11" y="2.5" width="6.5" height="6.5" rx="1.5"/><rect x="2.5" y="11" width="6.5" height="6.5" rx="1.5"/><rect x="11" y="11" width="6.5" height="6.5" rx="1.5"/></svg>
+      <span class="tip">工作台</span></button>
+    <button type="button" data-nav="conversion" aria-label="转化率监控">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 16.5V11"/><path d="M8.3 16.5V6"/><path d="M13.7 16.5v-3.5"/><path d="M3 8l5.3-5 5.4 5L18 4.2"/></svg>
+      <span class="tip">转化率监控</span></button>
+    <button type="button" data-nav="merchant" aria-label="商户成功率">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.6"/><path d="M12.9 12.9L17 17"/></svg>
+      <span class="tip">商户成功率</span></button>
+    <div class="spacer"></div>
+    <button type="button" id="themeBtn" aria-label="切换主题">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.6"/><path d="M10 3.4a6.6 6.6 0 000 13.2z" fill="currentColor" stroke="none"/></svg>
+      <span class="tip">切换主题</span></button>
+  </nav>
+
+  <div class="main">
+
+    <!-- ================= 首页：当天动作流 ================= -->
+    <div id="homeView">
+     <div class="wrap">
+
+      <header class="head">
+        <div>
+          <h1>今天的巡检</h1>
+          <div class="sub" id="todayLabel">—</div>
+        </div>
+        <div class="now">本地时间<b class="num" id="clock">--:--</b></div>
+      </header>
+
+      <!-- 系统状态：全绿时只占一行 -->
+      <section class="sys" id="sys" data-open="0">
+        <button type="button" class="sys-bar" id="sysBar" aria-expanded="false" aria-controls="sysDetail">
+          <span class="lamp" id="sysLamp"></span>
+          <span class="grow" id="sysText">正在检查飞书链路…</span>
+          <span class="caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="sys-detail" id="sysDetail">
+          <div class="stat"><div class="k">App 凭据</div><div class="v"><span class="d" data-d="app"></span><span data-v="app">—</span></div></div>
+          <div class="stat"><div class="k">Access Token</div><div class="v"><span class="d" data-d="token"></span><span data-v="token" class="num">—</span></div></div>
+          <div class="stat"><div class="k">续期线程</div><div class="v"><span class="d" data-d="thread"></span><span data-v="thread">—</span></div></div>
+          <div class="stat"><div class="k">群 Webhook</div><div class="v"><span class="d" data-d="hook"></span><span data-v="hook">—</span></div></div>
+          <div class="stat"><div class="k">多维表格</div><div class="v"><span class="d" data-d="bitable"></span><span data-v="bitable" class="num">—</span></div></div>
+          <div class="stat"><div class="k">出单监控脚本</div><div class="v"><span class="d" data-d="om"></span><span data-v="om">—</span></div></div>
+        </div>
+      </section>
+
+      <div class="sec"><h2>今天要做的</h2><span class="rule"></span></div>
+
+      <!-- ① 转化率 -->
+      <section class="act">
+        <div class="act-head">
+          <div class="ico" aria-hidden="true">◲</div>
+          <div class="t">
+            <h3>每日转化率巡检</h3>
+            <p>传昨天的 Excel，解析完自动写多维表格 + 推异常到飞书群。</p>
+          </div>
+        </div>
+        <div class="act-body">
+          <div class="tags">
+            <span class="tag on">凭据由工作台托管</span>
+            <span class="tag on">解析后自动同步</span>
+          </div>
+          <div class="row">
+            <button type="button" class="btn primary" data-open-tool="conversion">打开并上传 Excel</button>
+            <span style="font-size:12px;color:var(--ink-3)">打开即可用，不需要再填 Webhook 或 token。</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ② 出单监控 -->
+      <section class="act">
+        <div class="act-head">
+          <div class="ico amber" aria-hidden="true">◪</div>
+          <div class="t">
+            <h3>出单耗时监控</h3>
+            <p>选今天和昨天两份报表，对比分类后自动发群通知和 BD 私聊。</p>
+          </div>
+        </div>
+        <div class="act-body">
+          <div class="tags">
+            <span class="tag on" id="omModeTag">群通知 + BD 私聊</span>
+            <span class="tag" id="omPathTag">检查脚本位置…</span>
+          </div>
+          <form id="omForm" enctype="multipart/form-data">
+            <div class="fields">
+              <label class="f"><span>今天的报表</span>
+                <input type="file" name="today" accept=".xlsx,.xls" required></label>
+              <label class="f"><span>昨天的报表</span>
+                <input type="file" name="yesterday" accept=".xlsx,.xls" required></label>
+              <label class="f"><span>业务日期</span>
+                <input type="date" name="date" id="omDate" required></label>
+              <label class="f"><span>脚本密码</span>
+                <input type="password" name="password" autocomplete="current-password" required></label>
+            </div>
+            <div class="row" style="margin-top:12px">
+              <button type="submit" class="btn primary" id="omRun">开始运行</button>
+              <span id="omHint" style="font-size:12px;color:var(--ink-3)"></span>
+            </div>
+          </form>
+
+          <div class="log" id="omLog" hidden>
+            <div class="log-head">
+              <span class="spin" id="omSpin" aria-hidden="true"></span>
+              <span>脚本输出</span>
+              <span class="st run" id="omState">运行中</span>
+            </div>
+            <div class="log-body" id="omOut" role="log" aria-live="polite"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="sec"><h2>今天同步了什么</h2><span class="rule"></span></div>
+
+      <section class="feed" id="feed">
+        <div class="empty">还没有同步记录。转化率解析完成、或出单监控跑完后，这里会出现推送结果。</div>
+      </section>
+
+      <div class="foot">
+        <button type="button" class="btn quiet" data-open-tool="merchant">有异常？打开商户成功率做深挖 →</button>
+        <span style="margin-left:auto">中转地址 <code id="addr">—</code></span>
+      </div>
+
+     </div>
+    </div>
+
+    <!-- ================= 工具页 ================= -->
+    <div id="toolView" hidden>
+      <div class="tool-bar">
+        <button type="button" class="btn" id="backBtn">← 返回工作台</button>
+        <span class="ttl" id="toolTitle"></span>
+      </div>
+      <iframe id="toolFrame" title="工具页" src="about:blank"></iframe>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+const $  = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const API = location.origin;
+
+/* ---------- 主题 ---------- */
+(function(){
+  const KEY='wb_theme';
+  const saved=localStorage.getItem(KEY);
+  if(saved) document.documentElement.setAttribute('data-theme',saved);
+  $('#themeBtn').addEventListener('click',()=>{
+    const cur=document.documentElement.getAttribute('data-theme');
+    const sysDark=matchMedia('(prefers-color-scheme:dark)').matches;
+    const next=(cur ? cur : (sysDark?'dark':'light'))==='dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme',next);
+    localStorage.setItem(KEY,next);
+  });
+})();
+
+/* ---------- 时钟与日期 ---------- */
+const pad = n => String(n).padStart(2,'0');
+function tick(){
+  const d=new Date();
+  $('#clock').textContent = pad(d.getHours())+':'+pad(d.getMinutes());
+}
+tick(); setInterval(tick,20000);
+
+(function initDate(){
+  const d=new Date();
+  const W=['日','一','二','三','四','五','六'][d.getDay()];
+  $('#todayLabel').textContent = `${d.getFullYear()} 年 ${d.getMonth()+1} 月 ${d.getDate()} 日 · 星期${W}`;
+  // 出单监控默认对昨天的业务日期
+  const y=new Date(d.getTime()-86400000);
+  $('#omDate').value = `${y.getFullYear()}-${pad(y.getMonth()+1)}-${pad(y.getDate())}`;
+})();
+
+$('#addr').textContent = API;
+
+/* ---------- 导航 ---------- */
+const TOOLS={conversion:'每日转化率数据监控', merchant:'商户转化率 & 成功率分析'};
+
+function openTool(name){
+  $('#homeView').hidden = true;
+  $('#toolView').hidden = false;
+  $('#toolTitle').textContent = TOOLS[name] || name;
+  $('#toolFrame').src = '/' + name;
+  $$('.rail button[data-nav]').forEach(b=>b.setAttribute('aria-current', String(b.dataset.nav===name)));
+}
+function goHome(){
+  $('#toolView').hidden = true;
+  $('#toolFrame').src = 'about:blank';
+  $('#homeView').hidden = false;
+  $$('.rail button[data-nav]').forEach(b=>b.setAttribute('aria-current', String(b.dataset.nav==='home')));
+  refreshActivity();
+}
+$$('.rail button[data-nav]').forEach(b=>{
+  b.addEventListener('click',()=> b.dataset.nav==='home' ? goHome() : openTool(b.dataset.nav));
+});
+$$('[data-open-tool]').forEach(b=> b.addEventListener('click',()=>openTool(b.dataset.openTool)));
+$('#backBtn').addEventListener('click', goHome);
+
+/* ---------- 系统状态 ---------- */
+$('#sysBar').addEventListener('click',()=>{
+  const s=$('#sys');
+  const open = s.dataset.open==='1' ? '0' : '1';
+  s.dataset.open = open;
+  $('#sysBar').setAttribute('aria-expanded', open==='1');
+});
+
+function setStat(key, level, text, title){
+  const d=$(`[data-d="${key}"]`), v=$(`[data-v="${key}"]`);
+  if(d) d.className = 'd ' + level;
+  if(v){ v.textContent = text; if(title) v.title = title; else v.removeAttribute('title'); }
+}
+
+/* 后端把 requests 的异常原样传上来，长得像一整段 traceback。
+   状态条只有一行，直接塞进去会把其它信息全挤没，这里压成一句人话。 */
+function shortErr(e){
+  if(!e) return '';
+  const s=String(e);
+  if(/Max retries|ConnectionError|ProxyError|NewConnectionError/i.test(s)) return '连不上 open.feishu.cn';
+  if(/timeout|timed out/i.test(s)) return '请求超时';
+  if(/99991663|invalid app_secret|app_id/i.test(s)) return 'AppID / AppSecret 不对';
+  return s.length > 40 ? s.slice(0,40)+'…' : s;
+}
+function fmtMin(sec){
+  if(!sec || sec<0) return '0 分钟';
+  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60);
+  return h ? `${h} 小时 ${pad(m)} 分` : `${m} 分钟`;
+}
+
+async function refreshStatus(){
+  let r;
+  try{ r = await (await fetch('/api/status',{cache:'no-store'})).json(); }
+  catch(e){
+    $('#sysLamp').className='lamp crit';
+    $('#sysText').textContent='连不上工作台服务 —— 后台进程可能已退出';
+    return;
+  }
+  if(!r.config_loaded){
+    $('#sysLamp').className='lamp crit';
+    $('#sysText').textContent = r.hint || '未找到 config.json';
+    $('#sys').dataset.open='1';
+    return;
+  }
+  const s=r.summary||{}, t=s.token||{}, om=s.order_monitor||{};
+  const problems=[];
+
+  setStat('app', s.feishu_app_configured?'ok':'crit', s.feishu_app_configured?'已配置':'未配置');
+  if(!s.feishu_app_configured) problems.push('App 凭据未配置');
+
+  if(t.valid){ setStat('token','ok','剩 '+fmtMin(t.seconds_left)); }
+  else{ setStat('token','crit','未生效'); problems.push('Access Token 未生效'); }
+
+  // 续期线程活性 —— token 2h 过期，线程挂了就是一颗定时炸弹
+  if(t.thread_alive){
+    setStat('thread', t.last_error?'warn':'ok',
+            t.last_error ? '在跑 · 上次报错' : '在跑',
+            t.last_error || '');
+    if(t.last_error) problems.push('续期失败：'+shortErr(t.last_error));
+  }else if(t.configured){
+    setStat('thread','crit','已停止'); problems.push('token 续期线程已停止，请重启工作台');
+  }else{
+    setStat('thread','warn','未启动');
+  }
+
+  const hook = s.webhook_team_configured || s.webhook_personal_configured;
+  setStat('hook', hook?'ok':'crit', hook?'已配置':'未配置');
+  if(!hook) problems.push('群 Webhook 未配置');
+
+  const bt = s.bitable && s.bitable.configured;
+  setStat('bitable', bt?'ok':'crit', bt ? (s.bitable.table_id||'已配置') : '未配置');
+  if(!bt) problems.push('多维表格未配置');
+
+  setStat('om', om.available?'ok':'warn', om.available?'就位':'未找到');
+  $('#omPathTag').textContent = om.available ? ('脚本就位 · '+(om.mode||'both')) : '脚本未找到，请检查 config.json';
+  $('#omPathTag').className = 'tag ' + (om.available?'on':'off');
+  $('#omModeTag').textContent = om.mode==='group' ? '仅群通知'
+                              : om.mode==='dm'    ? '仅 BD 私聊'
+                              : '群通知 + BD 私聊';
+  if(!om.available) problems.push('出单监控脚本未找到');
+
+  if(problems.length===0){
+    $('#sysLamp').className='lamp ok';
+    $('#sysText').textContent='飞书链路正常 · 传文件即自动同步';
+  }else{
+    const crit = !s.feishu_app_configured || !t.valid || !hook || !bt || (t.configured && !t.thread_alive);
+    $('#sysLamp').className='lamp '+(crit?'crit':'warn');
+    $('#sysText').textContent = problems.join(' · ');
+    $('#sys').dataset.open='1';
+    $('#sysBar').setAttribute('aria-expanded','true');
+  }
+}
+
+/* ---------- 今日结果 ---------- */
+const KIND={webhook:'飞书推送', bitable:'多维表格', 'order-monitor':'出单监控'};
+async function refreshActivity(){
+  let items=[];
+  try{ items=(await (await fetch('/api/activity',{cache:'no-store'})).json()).items||[]; }catch(e){ return; }
+  const feed=$('#feed');
+  if(!items.length){
+    feed.replaceChildren(Object.assign(document.createElement('div'),{
+      className:'empty',
+      textContent:'还没有同步记录。转化率解析完成、或出单监控跑完后，这里会出现推送结果。'
+    }));
+    return;
+  }
+  const ol=document.createElement('ol');
+  items.slice(0,12).forEach(it=>{
+    const d=new Date(it.ts*1000);
+    const li=document.createElement('li');
+    const tm=document.createElement('span'); tm.className='tm';
+    tm.textContent=pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+    const kd=document.createElement('span'); kd.className='kd '+(it.ok?'ok':'err');
+    kd.textContent=KIND[it.kind]||it.kind;
+    const dt=document.createElement('span'); dt.className='dt'; dt.textContent=it.detail||'';
+    li.append(tm,kd,dt); ol.appendChild(li);
+  });
+  feed.replaceChildren(ol);
+}
+
+/* ---------- 出单监控：跑 + 实时日志 ---------- */
+let omSource=null;
+
+function omAppend(line){
+  const out=$('#omOut');
+  const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 30;
+  out.textContent += (out.textContent ? '\n' : '') + line;
+  if(atBottom) out.scrollTop = out.scrollHeight;
+}
+function omFinish(cls, text){
+  $('#omSpin').style.display='none';
+  $('#omState').className='st '+cls;
+  $('#omState').textContent=text;
+  $('#omRun').disabled=false;
+  $('#omRun').textContent='开始运行';
+  refreshActivity();
+}
+
+function omStream(jobId){
+  if(omSource) omSource.close();
+  omSource = new EventSource(`/api/jobs/${jobId}/stream`);
+  omSource.addEventListener('line', e=>{ try{ omAppend(JSON.parse(e.data)); }catch(_){ } });
+  omSource.addEventListener('done', e=>{
+    omSource.close(); omSource=null;
+    let snap={}; try{ snap=JSON.parse(e.data); }catch(_){ }
+    (snap.lines||[]).forEach(omAppend);
+    if(snap.error){ omAppend('[工作台] '+snap.error); omFinish('err','启动失败'); return; }
+    if(snap.returncode===0) omFinish('ok','完成 · 退出码 0');
+    else omFinish('err','失败 · 退出码 '+snap.returncode);
+  });
+  omSource.onerror = ()=>{
+    // 连接断了不代表任务失败，回落到快照确认真实状态
+    if(omSource){ omSource.close(); omSource=null; }
+    fetch(`/api/jobs/${jobId}`).then(r=>r.json()).then(s=>{
+      if(s.running){ omAppend('[工作台] 日志连接中断，正在重连…'); omStream(jobId); }
+      else if(s.returncode===0) omFinish('ok','完成 · 退出码 0');
+      else omFinish('err','失败 · 退出码 '+s.returncode);
+    }).catch(()=> omFinish('err','日志连接中断'));
+  };
+}
+
+$('#omForm').addEventListener('submit', async ev=>{
+  ev.preventDefault();
+  const btn=$('#omRun'), hint=$('#omHint');
+  btn.disabled=true; btn.textContent='上传中…'; hint.textContent='';
+  $('#omOut').textContent=''; $('#omLog').hidden=false;
+  $('#omSpin').style.display=''; $('#omState').className='st run'; $('#omState').textContent='运行中';
+
+  try{
+    const res=await fetch('/api/run/order-monitor',{method:'POST', body:new FormData(ev.target)});
+    const data=await res.json();     // 后端 /api/* 一律返回 JSON，不会再解析失败
+    if(!res.ok || !data.ok){
+      omAppend('[工作台] '+(data.msg||`HTTP ${res.status}`));
+      omFinish('err','未启动');
+      return;
+    }
+    btn.textContent='运行中…';
+    omAppend(`[工作台] 任务已启动（${data.mode==='both'?'群通知 + BD 私聊':data.mode}），输出如下：`);
+    omStream(data.job_id);
+  }catch(err){
+    omAppend('[工作台] 请求失败：'+err.message);
+    omFinish('err','未启动');
+  }
+});
+
+/* ---------- 启动 ---------- */
+refreshStatus();
+refreshActivity();
+setInterval(refreshStatus, 60000);
+setInterval(()=>{ if(!$('#homeView').hidden) refreshActivity(); }, 20000);
+</script>
+</body>
+</html>

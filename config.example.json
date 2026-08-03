@@ -1,0 +1,41 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 5050,
+    "debug": false
+  },
+  "feishu": {
+    "_comment_app": "在 https://open.feishu.cn/app 创建『企业自建应用』，拿到 AppID 和 AppSecret。需要权限：bitable:app:readonly、bitable:app:write，以及可选的 im:message:send_as_bot（发私信用）。AppSecret 只写进 config.json，永远不要提交到仓库。",
+    "app_id": "cli_XXXXXXXXXXXXXXXX",
+    "app_secret": "",
+
+    "_comment_webhook": "飞书群 → 设置 → 群机器人 → 添加『自定义机器人』；勾选『签名校验』会得到 secret。team 是团队群，personal 是只有你和机器人的告警群。两个填成同一个 URL 时工作台会自动去重，不会重复推送。",
+    "webhook": {
+      "team": {
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/TEAM_HOOK_TOKEN",
+        "secret": ""
+      },
+      "personal": {
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/PERSONAL_HOOK_TOKEN",
+        "secret": ""
+      }
+    },
+
+    "_comment_bitable": "多维表格 URL 形如 https://xxx.feishu.cn/base/APP_TOKEN?table=TABLE_ID。App 需被加为该表格的协作者。",
+    "bitable": {
+      "app_token": "APP_TOKEN",
+      "table_id": "tblXXXXXXXXXXXX"
+    },
+
+    "_comment_dm": "（可选）你的 open_id，用于 App 身份发私信。留空则不启用 DM。",
+    "my_open_id": ""
+  },
+
+  "_comment_order_monitor": "出单耗时监控脚本的位置。dir 是脚本所在目录，wrapper 是工作台调用的入口脚本。路径不存在时首页会提示，服务不会崩。",
+  "order_monitor": {
+    "dir": "D:\\商户数据\\出单耗时监控\\出单监控",
+    "wrapper": "出单监控_workbench.py",
+    "_comment_mode": "both = 一次运行同时发群通知和 BD 私聊；group = 只发群；dm = 只发私聊。",
+    "mode": "both"
+  }
+}
