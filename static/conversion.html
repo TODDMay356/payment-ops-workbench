@@ -87,6 +87,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .seg button:disabled{opacity:.35;cursor:not-allowed}
   .seg.sm button{font-size:12px;padding:4px 9px}
   .seg-lbl{font-size:11px;color:var(--muted);margin-right:-8px;white-space:nowrap}
+  /* .chart-head 一直没有样式规则，标题和右侧计数直接贴在一起 */
+  .chart-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .chart-head .s{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  /* 本期 / 对比期选择：可以挑任意两期比，不再写死最新两期 */
+  .datesel{display:inline-flex;align-items:center;gap:8px}
+  .datesel[hidden]{display:none}
+  .datesel label{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--muted);white-space:nowrap}
+  .datesel select{font:inherit;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink);
+    background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:4px 6px;cursor:pointer}
+  .datesel select:disabled{opacity:.45;cursor:not-allowed}
+  .datesel .lnk{all:unset;cursor:pointer;font-size:11.5px;color:var(--brand);white-space:nowrap}
+  .datesel .lnk:hover{text-decoration:underline}
+  .datesel .lnk[disabled]{opacity:.35;cursor:default;text-decoration:none}
   .theme{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:3px}
   .theme button{all:unset;cursor:pointer;font-size:12px;color:var(--ink-2);padding:4px 9px;border-radius:6px}
   .theme button[aria-pressed="true"]{background:var(--brand-soft);color:var(--brand-ink);font-weight:600}
@@ -306,6 +319,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       <button data-period="周报" aria-pressed="false" disabled>周</button>
       <button data-period="月报" aria-pressed="false" disabled>月</button>
     </div>
+    <div class="datesel" id="dateSel" hidden>
+      <label>本期<select id="selT" aria-label="本期"></select></label>
+      <label>对比<select id="selY" aria-label="上期"></select></label>
+      <button type="button" class="lnk" id="selLatest" title="回到最新两期">最新</button>
+    </div>
     <span class="hint" id="periodInfo"></span>
     <div class="nav-spacer"></div>
     <div class="theme" role="group" aria-label="主题">
@@ -471,10 +489,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         <div id="onlineNote"></div>
 
         <div class="autosync">
-          <label class="chk"><input type="checkbox" id="fsAuto"><b>解析后自动同步</b></label>
-          <span class="hint">开启后：每次上传文件或切换周期解析完成，自动写入多维表格并推送异常，无需再点按钮。
-            同一「周期+日期」本次会话只同步一次，不会重复写入；无异常时不推送，避免刷屏。</span>
-          <div class="status" id="fsAutoStatus"></div>
+          <b>本次要发的内容</b>
+          <div class="status" id="fsSubject">尚未解析数据。</div>
+          <span class="hint">解析和切换日期都<b>不会</b>自动发飞书 —— 下面两个按钮点了才发。
+            切到别的周期或别的对比日期时，记得回来确认这里显示的是不是你想发的那一期。</span>
         </div>
 
         <div class="subhead">① 异常消息推送（群自定义机器人 Webhook）</div>
@@ -980,10 +998,14 @@ function distinctRootCauses(...lists){
 /* ============================================================
    5. 合并今昨（对应 build_merged / build_wide）
    ============================================================ */
-function buildMerged(df, hasSite){
+function buildMerged(df, hasSite, tDate, yDate){
   const dates = [...new Set(df.map(o=>o['统计日期']).filter(d=>d))].sort().reverse();
   if(dates.length<2) throw new Error(`${PERIOD}数据不足${P().minGap}。现有：${dates.join(' , ')||'无'}`);
-  const tDate=dates[0], yDate=dates[1];
+  // 不传就沿用老行为（最新两期）；run() 会把选中的那一对传进来，
+  // 保证 dfSite / dfTotal 两次调用算的是同一对日期。
+  if(!tDate || !yDate){ tDate=dates[0]; yDate=dates[1]; }
+  else if(!dates.includes(tDate) || !dates.includes(yDate))
+    throw new Error(`所选日期在${PERIOD}数据中不存在：${tDate} / ${yDate}`);
 
   const keys=['来源'];
   for(const k of ['用户ID','商户名称']) if(k in (df[0]||{})) keys.push(k);
@@ -1223,15 +1245,39 @@ function broadcastMd(aT,dT,aS,dS,tDate){
 /* ============================================================
    8. 主流程 + 渲染
    ============================================================ */
-const state = { wb:null, baseline:null, baselineActive:false };
+// sel：每个周期选中的对比期，null = 跟随最新两期
+const state = { wb:null, baseline:null, baselineActive:false, sel:{} };
+
+/**
+ * 某周期可用的统计日期，倒序。
+ * 必须和 buildMerged 用同一份数据（商户维度 dfSite），
+ * 否则会出现「下拉里有这个日期、真去算却抛数据不足」。
+ */
+function periodDates(wb, period){
+  try{
+    const {dfSite}=loadMerchant(wb, period||PERIOD);
+    return [...new Set(dfSite.map(o=>o['统计日期']).filter(d=>d))].sort().reverse();
+  }catch(e){ return []; }
+}
+
+/** 解析当前周期该用哪一对日期：选过就用选的，没选或选的已失效就回到最新两期 */
+function resolvePair(wb, period){
+  const dates=periodDates(wb, period);
+  if(dates.length<2) return {dates, t:dates[0]||null, y:dates[1]||null};
+  const s=state.sel[period];
+  let t=s&&s.t, y=s&&s.y;
+  if(!dates.includes(t) || !dates.includes(y) || t===y || t<y){ t=dates[0]; y=dates[1]; }
+  return {dates, t, y};
+}
 
 function run(){
   const wb=state.wb;
   const dfScene=loadScene(wb, PERIOD);
   const {dfSite,dfTotal,hasSite}=loadMerchant(wb, PERIOD);
 
-  const {merged:mergedSite,tDate,yDate}=buildMerged(dfSite,hasSite);
-  const {merged:mergedTotal}=buildMerged(dfTotal,false);
+  const pair=resolvePair(wb, PERIOD);
+  const {merged:mergedSite,tDate,yDate}=buildMerged(dfSite,hasSite,pair.t,pair.y);
+  const {merged:mergedTotal}=buildMerged(dfTotal,false,pair.t,pair.y);
 
   const wide=buildWide(mergedSite,hasSite);
 
@@ -1246,8 +1292,9 @@ function run(){
   state.data={dfScene,mergedSite,mergedTotal,tDate,yDate,hasSite,wide,period:PERIOD,stages,
               drillSite:dS,drillTotal:dT,alarmSite:aS,alarmTotal:aT};
   render();
-  // 开了「解析后自动同步」就在这里自动跑，不阻塞渲染
-  if(typeof maybeAutoSync==='function') maybeAutoSync().catch(e=>console.error(e));
+  if(typeof syncDateSel==='function') syncDateSel();
+  // 解析完不发任何东西，只更新「本次要发的内容」那行；发不发由人点按钮
+  if(typeof updateFsSubject==='function') updateFsSubject();
 }
 
 function render(){
@@ -1728,6 +1775,80 @@ function syncPeriodUI(){
   document.querySelectorAll('.pd-hist').forEach(el=>el.textContent=P().unit+'报');
   document.querySelectorAll('.pd-dod').forEach(el=>el.textContent=P().dod);
 }
+/* ---- 本期 / 对比期选择 ---- */
+
+/** 按当前周期重填两个下拉，并把选中项同步成 run() 实际用的那一对 */
+function syncDateSel(){
+  const box=$('#dateSel'); if(!box) return;
+  if(!state.wb){ box.hidden=true; return; }
+  const {dates,t,y}=resolvePair(state.wb, PERIOD);
+  if(dates.length<2){ box.hidden=true; return; }
+  box.hidden=false;
+
+  const fill=(sel,cur)=>{
+    sel.replaceChildren(...dates.map(d=>{
+      const o=document.createElement('option');
+      o.value=d; o.textContent=d; o.selected=(d===cur);
+      return o;
+    }));
+  };
+  fill($('#selT'), t);
+  fill($('#selY'), y);
+
+  const latest = (t===dates[0] && y===dates[1]);
+  $('#selLatest').disabled = latest;
+  $('#selLatest').textContent = latest ? '最新两期' : '回到最新';
+}
+
+/**
+ * 选完之后保证「本期晚于对比期」。
+ * 撞车时自动把另一个挪开，而不是打回让人重选 ——
+ * 否则想往前翻一期，得先改对比期再改本期，很别扭。
+ * which: 't' = 用户刚改了本期，'y' = 刚改了对比期
+ */
+function onDateSelChange(which){
+  const dates=periodDates(state.wb, PERIOD);   // 倒序
+  const msg=$('#loadMsg');
+  let t=$('#selT').value, y=$('#selY').value;
+
+  if(t<=y){
+    if(which==='t'){
+      const cand=dates.find(d=>d<t);           // 比本期旧的最近一期
+      if(!cand){
+        msg.innerHTML='<div class="banner warn" style="margin-top:10px">这已经是最早的一期，没有更早的可对比。</div>';
+        syncDateSel(); return;
+      }
+      y=cand;
+    }else{
+      const asc=[...dates].reverse();
+      const cand=asc.find(d=>d>y);             // 比对比期新的最近一期
+      if(!cand){
+        msg.innerHTML='<div class="banner warn" style="margin-top:10px">这已经是最新一期，没有更新的可作为本期。</div>';
+        syncDateSel(); return;
+      }
+      t=cand;
+    }
+  }
+  state.sel[PERIOD]={t,y};
+  try{
+    run();
+    const latest=(periodDates(state.wb,PERIOD)[0]===t);
+    msg.innerHTML=`<div class="banner ok" style="margin-top:10px">✅ ${PERIOD} · 本期 ${t}（对比 ${y}）`
+                + (latest?'':' —— 正在查看历史区间，要发飞书请确认下方「本次要发的内容」') + '</div>';
+  }catch(err){
+    msg.innerHTML=`<div class="banner warn" style="margin-top:10px">解析失败：${esc(err.message||String(err))}</div>`;
+  }
+}
+$('#selT').addEventListener('change', ()=>onDateSelChange('t'));
+$('#selY').addEventListener('change', ()=>onDateSelChange('y'));
+$('#selLatest').addEventListener('click', ()=>{
+  state.sel[PERIOD]=null;
+  if(!state.wb) return;
+  try{ run(); $('#loadMsg').innerHTML=
+    `<div class="banner ok" style="margin-top:10px">✅ 已回到最新两期 · 本期 ${state.data.tDate}（对比 ${state.data.yDate}）</div>`; }
+  catch(err){ $('#loadMsg').innerHTML=`<div class="banner warn" style="margin-top:10px">解析失败：${esc(err.message||String(err))}</div>`; }
+});
+
 $('#periodSeg').addEventListener('click', e=>{
   const b=e.target.closest('button'); if(!b||b.disabled||b.dataset.period===PERIOD) return;
   PERIOD=b.dataset.period;
@@ -1756,6 +1877,7 @@ $('#file').addEventListener('change', async e=>{
     if(!firstOk) throw new Error('未找到可对比的周期数据：日报/周报/月报均不足两期。');
 
     state.wb=wb;
+    state.sel={};                 // 换文件了，之前选的日期多半已经不存在
     loadBaselineForPeriod();
     run();
     $('#app').hidden=false; $('#foot').hidden=false;
@@ -1965,7 +2087,6 @@ let FS_MANAGED=false;
   try{ const j=JSON.parse(localStorage.getItem('crm_feishu')||'{}');
     FS_KEYS.forEach(k=>{ if(j[k]!=null) $('#'+k).value=j[k]; });
     if(j.cardMode) $('#fsCardMode').checked=true;
-    if(j.auto) $('#fsAuto').checked=true;
   }catch(e){}
 })();
 
@@ -1990,7 +2111,6 @@ let FS_MANAGED=false;
   $('#fsTable').value     = (cfg.bitable&&cfg.bitable.table_id) || 'workbench';
   $('#fsToken').value     = 'managed_by_workbench';   // 工作台自己加 Bearer，这里只是占位
   $('#fsSecret').value    = '';                        // 签名由工作台做
-  if(cfg.auto) $('#fsAuto').checked=true;
   if(cfg.card) $('#fsCardMode').checked=true;
 
   FS_KEYS.forEach(k=>{ const el=$('#'+k); if(el){ el.readOnly=true; el.style.opacity=.6; el.title='由工作台统一管理'; } });
@@ -1999,20 +2119,18 @@ let FS_MANAGED=false;
   note.className='banner ok';
   note.style.marginBottom='14px';
   note.innerHTML='🔗 <b>凭据由工作台托管</b> —— Webhook / 多维表格 / token 都走本机工作台中转，'
-               + '下面的配置项已自动填好并锁定，无需手动填写。<b>解析后自动同步已开启</b>。';
+               + '下面的配置项已自动填好并锁定，无需手动填写。<b>发不发飞书由你点按钮决定</b>。';
   const panel=document.querySelector('#p-feishu .card');
   const anchor=panel && panel.querySelector('.autosync');
   if(anchor) panel.insertBefore(note, anchor);
 
-  if(typeof updateFsBadge==='function') updateFsBadge();
-  // 配置到得比数据晚时（先传了文件才拉到 bootstrap），补跑一次同步
-  if(typeof maybeAutoSync==='function' && state && state.data) maybeAutoSync().catch(e=>console.error(e));
+  if(typeof updateFsSubject==='function') updateFsSubject();
 })();
 
 function saveFeishu(){
   if(FS_MANAGED) return;
   const o={}; FS_KEYS.forEach(k=>o[k]=$('#'+k).value.trim());
-  o.cardMode=$('#fsCardMode').checked; o.auto=$('#fsAuto').checked;
+  o.cardMode=$('#fsCardMode').checked;
   try{ localStorage.setItem('crm_feishu', JSON.stringify(o)); }catch(e){}
 }
 FS_KEYS.forEach(k=>$('#'+k).addEventListener('input', saveFeishu));
@@ -2085,11 +2203,14 @@ $('#fsSend').addEventListener('click', async ()=>{
   const st=$('#fsStatus');
   if(!$('#fsHook').value.trim()){ st.className='status err'; st.textContent='请填写 Webhook 地址。'; return; }
   if(anomalyCount()===0 && !confirm(`本期(${PERIOD})无异常，仍要推送「平稳」播报到飞书吗？`)) return;
+  if(!confirmResend('webhook','推送')) return;
   st.className='status'; st.textContent='正在推送…';
   const r=await pushWebhook();
   st.className='status '+(r.ok?'ok':'err');
   st.innerHTML = r.ok ? '✅ '+esc(r.msg)
     : esc(r.msg)+(r.skip?'':'。请填代理地址，或点「复制 curl」到终端 / 后端执行。');
+  if(r.ok) sent.webhook.add(syncKey());
+  updateFsSubject();
 });
 $('#fsCopyCurl').addEventListener('click', async ()=>{
   if(!state.data) return;
@@ -2138,11 +2259,14 @@ function refreshRecInfo(){
 $('#fsWrite').addEventListener('click', async ()=>{
   if(!state.data) return;
   const st=$('#fsWriteStatus');
+  if(!confirmResend('bitable','写表')) return;
   st.className='status'; st.textContent='正在写入多维表格…';
   const r=await writeBitable();
   st.className='status '+(r.ok?'ok':'err');
   st.innerHTML = r.ok ? '✅ '+esc(r.msg)
     : esc(r.msg)+(r.skip?'':'。请填代理地址，或点「复制写表 curl」手动执行。');
+  if(r.ok) sent.bitable.add(syncKey());
+  updateFsSubject();
 });
 $('#fsCopyRecCurl').addEventListener('click', async ()=>{
   if(!state.data) return;
@@ -2159,63 +2283,40 @@ $('#fsDlRec').addEventListener('click', ()=>{
 });
 
 /* ============================================================
-   12. 解析后自动同步
-   每次解析（上传文件 / 切换周期）成功后自动跑一次，无需点按钮。
-   两项动作各自按「周期+日期」去重：成功的不再重复，失败的下次可重试，
-   因此不会出现「推送失败重试却把多维表格写重复」的情况。
+   12. 发送前的确认信息
+   这里以前是「解析后自动同步」。取消了：加上日期筛选之后，
+   去重 key 是「周期+本期日期」，换一次对比日期就是一个新 key，
+   于是每换一次日期就往群里推一次。什么时候发改由人点按钮决定。
+
+   sent 只用来防误触（同一期连点两次会问一句），不阻止真的想重发。
    ============================================================ */
-const autoDone = { bitable:new Set(), webhook:new Set() };
+const sent = { bitable:new Set(), webhook:new Set() };
 
-function updateFsBadge(){
-  const on=$('#fsAuto').checked;
-  $('#fsCnt').textContent = on ? '自动同步：开' : '自动同步：关';
+const syncKey = () => state.data ? `${state.data.period||PERIOD}|${state.data.tDate}` : '';
+
+/** 按钮上方那行：这次点下去到底会发哪一期的什么 */
+function updateFsSubject(){
+  const el=$('#fsSubject'); if(!el) return;
+  if(!state.data){
+    el.className='status';
+    el.textContent='尚未解析数据。';
+    $('#fsCnt').textContent='';
+    return;
+  }
+  const d=state.data, n=anomalyCount(), key=syncKey();
+  const done=[];
+  if(sent.webhook.has(key)) done.push('已推送');
+  if(sent.bitable.has(key)) done.push('已写表');
+  el.className='status '+(n?'err':'ok');
+  el.textContent = `${d.period||PERIOD}　本期 ${d.tDate}（对比 ${d.yDate}）　异常 ${n} 项`
+                 + (done.length?`　·　本次会话${done.join('、')}`:'');
+  $('#fsCnt').textContent = `${d.tDate} · 异常 ${n}`;
 }
 
-async function maybeAutoSync(){
-  if(!$('#fsAuto') || !$('#fsAuto').checked || !state.data) return;
-  const key=`${state.data.period||PERIOD}|${state.data.tDate}`;
-  const st=$('#fsAutoStatus');
-  const parts=[];
-
-  // ① 多维表格底账：无论有无异常都记，基准线要靠全量分布
-  if(autoDone.bitable.has(key)){
-    parts.push('多维表格：本期已同步，跳过');
-  }else{
-    autoDone.bitable.add(key);                       // 先占位，防止并发重复写
-    st.className='status'; st.textContent='自动同步中…';
-    const w=await writeBitable();
-    if(w.skip){ autoDone.bitable.delete(key); parts.push('多维表格：跳过（'+w.msg+'）'); }
-    else if(w.ok){ parts.push('多维表格：✅ '+w.msg); }
-    else { autoDone.bitable.delete(key); parts.push('多维表格：❌ '+w.msg); }
-  }
-
-  // ② 异常推送：只在有异常时发，避免每次解析都往群里刷「平稳」
-  if(anomalyCount()===0){
-    parts.push('异常推送：跳过（本期无异常）');
-  }else if(autoDone.webhook.has(key)){
-    parts.push('异常推送：本期已推送，跳过');
-  }else{
-    autoDone.webhook.add(key);
-    const p=await pushWebhook();
-    if(p.skip){ autoDone.webhook.delete(key); parts.push('异常推送：跳过（'+p.msg+'）'); }
-    else if(p.ok){ parts.push('异常推送：✅ '+p.msg); }
-    else { autoDone.webhook.delete(key); parts.push('异常推送：❌ '+p.msg); }
-  }
-
-  const failed=parts.some(x=>x.includes('❌'));
-  st.className='status '+(failed?'err':'ok');
-  st.textContent=`[${key}] `+parts.join('　·　');
+/** 同一期重复发之前问一句。true = 继续发 */
+function confirmResend(kind, label){
+  const key=syncKey();
+  if(!key || !sent[kind].has(key)) return true;
+  return confirm(`本期（${key}）本次会话已经${label}过一次了，确定再来一次吗？`);
 }
-
-$('#fsAuto').addEventListener('change', ()=>{
-  saveFeishu(); updateFsBadge();
-  const st=$('#fsAutoStatus');
-  if($('#fsAuto').checked){
-    st.className='status'; st.textContent='已开启。下次解析或切换周期时自动同步；也可现在手动点按钮。';
-    if(state.data) maybeAutoSync().catch(e=>console.error(e));
-  }else{
-    st.className='status'; st.textContent='已关闭，回到手动点按钮。';
-  }
-});
-updateFsBadge();
 </script>

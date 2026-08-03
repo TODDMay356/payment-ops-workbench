@@ -198,8 +198,11 @@ def bootstrap():
 
     以前靠首页那个「一键配置并打开」按钮往 localStorage 里写默认值，
     但它写的键名（fsAuto / fsCardMode）和工具页读的键名（auto / cardMode）对不上，
-    结果自动同步开关从来没被真正勾上 —— 工具页每次都在第一行守卫处直接返回，
-    什么都没同步。改成由工作台下发配置后，就不存在「忘了点那个按钮」这回事了。
+    结果凭据填了、开关却从来没被勾上。改成由工作台下发配置后，
+    就不存在「忘了点那个按钮」这回事了。
+
+    不再下发 auto：解析完不自动同步，什么时候发飞书由人点按钮决定。
+    否则一换对比日期就会同步一次 —— 去重 key 是「周期+本期日期」，换日期就是新 key。
 
     工具页直连（不经工作台）时这个请求会失败，它会自动退回原来的 localStorage 方案。
     """
@@ -216,7 +219,6 @@ def bootstrap():
             "app_token": b.get("app_token") or "workbench",
             "table_id": b.get("table_id") or "workbench",
         },
-        "auto": True,
         "card": True,
     })
 
