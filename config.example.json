@@ -36,6 +36,8 @@
     "dir": "D:\\商户数据\\出单耗时监控\\出单监控",
     "wrapper": "出单监控_workbench.py",
     "_comment_mode": "both = 一次运行同时发群通知和 BD 私聊；group = 只发群；dm = 只发私聊。",
-    "mode": "both"
+    "mode": "both",
+    "_comment_python": "跑出单监控用哪个 Python。留空 = 用工作台自己的 venv，但那个 venv 默认只有 flask+requests，而脚本需要 pandas 和 openpyxl。要么把它们装进工作台 venv（venv\\Scripts\\python.exe -m pip install pandas openpyxl），要么在这里指向一个已经装好的解释器。首页状态条会告诉你缺不缺。",
+    "python": ""
   }
 }

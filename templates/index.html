@@ -528,8 +528,15 @@ async function refreshStatus(){
   setStat('bitable', bt?'ok':'crit', bt ? (s.bitable.table_id||'已配置') : '未配置');
   if(!bt) problems.push('多维表格未配置');
 
-  setStat('om', om.available?'ok':'warn', om.available?'就位':'未找到');
-  $('#omPathTag').textContent = om.available ? ('脚本就位 · '+(om.mode||'both')) : '脚本未找到，请检查 config.json';
+  // 脚本找得到 ≠ 能跑：还得看那个解释器里有没有 pandas / openpyxl
+  let omLabel, omTip='';
+  if(om.available)           omLabel='就位';
+  else if(!om.script_found)  omLabel='脚本未找到';
+  else                     { omLabel='缺依赖'; omTip=(om.python||'')+' '+(om.deps_msg||''); }
+  setStat('om', om.available?'ok':'warn', omLabel, omTip);
+  $('#omPathTag').textContent = om.available ? ('脚本就位 · '+(om.mode||'both'))
+                             : !om.script_found ? '脚本未找到，请检查 config.json 的 order_monitor.dir'
+                             : (om.deps_msg||'依赖不全')+'，见 README「出单监控」一节';
   $('#omPathTag').className = 'tag ' + (om.available?'on':'off');
   $('#omModeTag').textContent = om.mode==='group' ? '仅群通知'
                               : om.mode==='dm'    ? '仅 BD 私聊'

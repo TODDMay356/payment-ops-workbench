@@ -23,6 +23,7 @@ import sys
 import json
 import time
 import logging
+import subprocess
 import tempfile
 import threading
 from collections import deque
@@ -334,14 +335,51 @@ def _order_monitor_paths() -> tuple[Path, Path]:
     return d, w
 
 
+def _order_monitor_python() -> str:
+    """
+    跑出单监控用哪个 Python。
+
+    默认是 sys.executable，也就是工作台自己的 venv —— 但那个 venv 只装了 flask + requests，
+    而出单监控脚本要 pandas / openpyxl，直接跑会 ModuleNotFoundError。
+    要么把 pandas 装进工作台 venv，要么在这里指向一个已经有 pandas 的解释器。
+    """
+    return (config.get("order_monitor") or {}).get("python") or sys.executable
+
+
 def _order_monitor_status() -> dict:
     d, w = _order_monitor_paths()
+    py = _order_monitor_python()
+    deps_ok, deps_msg = _check_order_monitor_deps(py)
     return {
         "dir": str(d),
         "wrapper": str(w),
-        "available": w.exists(),
+        "available": w.exists() and deps_ok,
+        "script_found": w.exists(),
+        "python": py,
+        "deps_ok": deps_ok,
+        "deps_msg": deps_msg,
         "mode": (config.get("order_monitor") or {}).get("mode") or "both",
     }
+
+
+_deps_cache: dict = {}
+
+
+def _check_order_monitor_deps(py: str) -> tuple[bool, str]:
+    """确认那个解释器里有 pandas / openpyxl。结果缓存，别每次刷状态都起进程。"""
+    if py in _deps_cache:
+        return _deps_cache[py]
+    try:
+        r = subprocess.run(
+            [py, "-c", "import pandas, openpyxl"],
+            capture_output=True, timeout=30,
+        )
+        ok = r.returncode == 0
+        msg = "" if ok else "缺少 pandas / openpyxl"
+    except Exception as e:
+        ok, msg = False, f"解释器不可用：{e}"
+    _deps_cache[py] = (ok, msg)
+    return ok, msg
 
 
 @app.route("/api/run/order-monitor", methods=["POST"])
@@ -370,6 +408,14 @@ def run_order_monitor():
     om_dir, wrapper = _order_monitor_paths()
     if not wrapper.exists():
         abort(400, description=f"找不到出单监控脚本：{wrapper}。请在 config.json 的 order_monitor.dir 里指向正确目录。")
+
+    py = _order_monitor_python()
+    deps_ok, deps_msg = _check_order_monitor_deps(py)
+    if not deps_ok:
+        abort(400, description=(
+            f"{py} {deps_msg}。出单监控脚本需要 pandas 和 openpyxl —— "
+            f"把它们装进这个解释器（pip install pandas openpyxl），"
+            f"或在 config.json 的 order_monitor.python 里指向一个已经有的解释器。"))
 
     # 存到临时目录，不再往脚本目录里扔 _wb_today_*.xlsx（那些文件从来没人清理）
     tmp = Path(tempfile.mkdtemp(prefix="wb_order_"))
