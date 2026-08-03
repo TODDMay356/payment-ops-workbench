@@ -379,6 +379,21 @@ def run_order_monitor():
     yesterday.save(str(yesterday_path))
 
     mode = (config.get("order_monitor") or {}).get("mode") or "both"
+    # AppSecret 经环境变量下发，脚本里就不用再硬编码一份。
+    # 走 env 而不是命令行参数：命令行在任务管理器里是明文可见的。
+    app_secret = (config.get("feishu") or {}).get("app_secret") or ""
+
+    label = {"both": "群通知 + BD 私聊", "group": "仅群通知", "dm": "仅 BD 私聊"}.get(mode, mode)
+
+    def _done(job):
+        """出单监控脚本直连飞书，不走中转路由，所以流水得在这里补记。"""
+        if job.returncode == 0:
+            _record("order-monitor", True, f"{report_date} · {label} 已完成")
+        else:
+            tail = next((l for l in reversed(job.lines) if l.strip()), "")
+            _record("order-monitor", False,
+                    f"{report_date} · 失败（退出码 {job.returncode}）{('：' + tail[:120]) if tail else ''}")
+
     job_id = jobs.start_job(
         "order-monitor",
         [sys.executable, str(wrapper),
@@ -388,6 +403,8 @@ def run_order_monitor():
          "--date", report_date,
          "--mode", mode],
         cwd=str(om_dir),
+        env_extra={"WB_FEISHU_APP_SECRET": app_secret} if app_secret else None,
+        on_done=_done,
     )
     log.info(f"出单监控任务已启动 job={job_id} date={report_date} mode={mode}")
     return jsonify({"ok": True, "job_id": job_id, "mode": mode})

@@ -30,10 +30,11 @@ _jobs_lock = threading.Lock()
 
 
 class Job:
-    def __init__(self, job_id: str, name: str, argv: list[str]):
+    def __init__(self, job_id: str, name: str, argv: list[str], on_done=None):
         self.id = job_id
         self.name = name
         self.argv = argv
+        self.on_done = on_done
         self.lines: list[str] = []
         self.started_at = time.time()
         self.finished_at: float | None = None
@@ -60,6 +61,12 @@ class Job:
             self.error = error
             self.finished_at = time.time()
         self.tick.set()
+        if self.on_done:
+            # 回调只是记流水，出错不能影响任务本身的收尾
+            try:
+                self.on_done(self)
+            except Exception:
+                pass
 
     # ---------- 外部：读取 ----------
 
@@ -111,10 +118,13 @@ def _evict_locked():
 
 
 def start_job(name: str, argv: list[str], cwd: str | None = None,
-              env_extra: dict[str, str] | None = None) -> str:
-    """起一个后台进程，返回 job_id。不会弹任何窗口。"""
+              env_extra: dict[str, str] | None = None, on_done=None) -> str:
+    """
+    起一个后台进程，返回 job_id。不会弹任何窗口。
+    on_done(job) 在进程结束后调用（含启动失败），用来记流水。
+    """
     job_id = uuid.uuid4().hex[:12]
-    job = Job(job_id, name, argv)
+    job = Job(job_id, name, argv, on_done=on_done)
 
     env = os.environ.copy()
     # 关键：Windows 上 Python 对管道 stdout 是块缓冲的，不设这个，

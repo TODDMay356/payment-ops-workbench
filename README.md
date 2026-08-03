@@ -68,22 +68,48 @@
 
 ---
 
-## 出单监控 wrapper 的接口约定
+## 出单监控
 
-工作台用下面这组参数调 `order_monitor.wrapper`，脚本需要满足：
+### 装法
+
+把 `scripts/出单监控_workbench.py` 复制到 `order_monitor.dir` 指向的目录
+（和 `出单监控.py`、`出单监控_BD私聊版.py` 放一起），**覆盖旧的同名文件**。
+另外两个脚本**不用动**。
+
+### 一次运行发两边
+
+旧版 wrapper 走的是「出单监控.py」的 `main()`，那条路只发群通知，BD 私聊要另开脚本再跑一遍
+（等于把两份 Excel 重算两次）。「出单监控_BD私聊版.py」的 `run_pipeline()` 本来就是超集，
+新 wrapper 直接复用它的函数：**一次分析 → 群通知 + 多维表格 + BD 私聊**，每步各自 try/except 互不影响。
+
+`config.json` 的 `order_monitor.mode`：`both`（默认）/ `group` / `dm`。
+
+### AppSecret 只填一处
+
+工作台把 `feishu.app_secret` 经环境变量 `WB_FEISHU_APP_SECRET` 传给脚本，
+脚本优先用它，没有才退回「出单监控.py」里硬编码的值。
+**换密钥时改 `config.json` 就够，不用再去改脚本代码。**
+（走环境变量而不是命令行参数：命令行在任务管理器里是明文可见的。）
+
+### CLI 约定
 
 ```
 python 出单监控_workbench.py \
-  --today <xlsx> --yesterday <xlsx> --password <pw> --date YYYY-MM-DD --mode both
+  --today <xlsx> --yesterday <xlsx> --password <pw> \
+  --date YYYY-MM-DD --mode both [--app-secret xxx]
 ```
 
-- `--mode both` 一次运行**同时**发群通知和 BD 私聊；`group` / `dm` 只发一边
-- 进度**逐行**打到 stdout（工作台会实时转发到网页）
-- 成功退出码 0；失败非 0，并把原因打在 stdout 最后一行
-- **不要**在结尾 `input("按回车键关闭...")` —— 没有控制台了，stdin 是 DEVNULL，会立刻 EOF
+- `--date` 是**必填**的业务日期。旧版从文件名里抠 `YYYY-MM-DD`，而工作台把上传文件存成
+  `today.xlsx` / `yesterday.xlsx`，抠不出来就退回"运行当天" —— 跑昨天的报表会被当成今天，
+  「新审核通过」判定、开通天数、周报星期判断全错
+- 进度逐行打到 stdout（工作台实时转发到网页）
+- 成功退出码 0；失败非 0，原因在 stdout 最后一行
+- 结尾不再 `input("按回车键关闭...")` —— 没有控制台了，stdin 是 DEVNULL，`input()` 会抛
+  EOFError，把一次成功的运行显示成失败
 
-工作台侧已经处理好的：`PYTHONUNBUFFERED=1` / `PYTHONIOENCODING=utf-8`（否则 Windows 上管道是块缓冲，
-日志会等到脚本跑完才一次性吐出来）、Windows 下 `CREATE_NO_WINDOW`（不弹窗）。
+工作台侧已处理：`PYTHONUNBUFFERED=1` / `PYTHONIOENCODING=utf-8`（否则 Windows 上管道是块缓冲，
+日志会等脚本跑完才一次性吐出来）、Windows 下 `CREATE_NO_WINDOW`（不弹窗）、
+没有 tkinter 的 Python 用空壳顶上（工作台这条路不开窗口）。
 
 ---
 
