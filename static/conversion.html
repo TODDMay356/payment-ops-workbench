@@ -841,10 +841,26 @@ const SPECIAL_DENOM = {
     Math.max(0, chainNumer(row,'3. 网关提交率',suf) - chainNumer(row,'3.3 3DS通过率',suf)),
 };
 
+/** 有没有完整的分母链 —— 没有就算不出「进入/通过本环节」的单量。 */
+function hasDenomChain(metric){
+  let m=metric, guard=0;
+  while(guard++ < 20){
+    if(SPECIAL_DENOM[m]) return true;
+    const p=DEPS[m];
+    if(p===undefined) return false;   // 复合指标（如「1. 业务单支付转化率」= 1.1×1.2）没有自己的分母
+    if(p==='PO单数') return true;
+    m=p;
+  }
+  return false;
+}
+
 function chainDenom(row, metric, suf){
   const sp = SPECIAL_DENOM[metric];
   if(sp) return sp(row, suf);
   const parent = DEPS[metric];
+  // 没有父级就到头了。原来这里直接往下递归，parent 为 undefined 时
+  // chainDenom(row, undefined) 又查不到 DEPS[undefined]，于是无限递归栈溢出。
+  if(parent===undefined) return NaN;
   if(parent==='PO单数') return num(row['PO单数'+suf]);
   const pdenom = chainDenom(row, parent, suf);
   return pdenom * num(row[parent+suf]);
@@ -1106,14 +1122,18 @@ function drillMetric(merged, source, metric, isF, totalPO, hasSite, dir){
     // 摩擦类涨=坏、通过率类跌=坏；取反就是"变好"
     const worse = isF ? delta>0 : delta<0;
     if(delta===0 || worse!==wantWorse) continue;
-    const [dT,nT]=calcFunnel(r,metric,'_今');
+    // 「影响」= PO占比 × 该商户比率变动，只要有比率和 PO 就算得出来。
+    // 「进入/通过本环节」的单量才需要分母链 —— 复合指标（如「1. 业务单支付转化率」
+    // = 1.1×1.2）没有自己的分母，那两列留空即可，不该因此拒绝整条下钻。
+    const canFunnel = hasDenomChain(metric);
+    const [dT,nT] = canFunnel ? calcFunnel(r,metric,'_今') : [null,null];
     const impactRate = totalPO ? (po/totalPO)*delta : 0;
     recs.push({
       来源:source,异常指标:metric,
       用户ID:String(r['用户ID']||''),商户名称:String(r['商户名称']||''),
       站点: hasSite ? String(r['站点']||'') : '(用户ID合计)',
       本期PO总单量:Math.round(po),
-      '进入本环节(单)':dT,'通过本环节(单)':nT,'是否>PO': dT>po?'是':'否',
+      '进入本环节(单)':dT,'通过本环节(单)':nT,'是否>PO': (dT!=null && dT>po) ? '是':'否',
       本期比率:pct(rateT),上期比率:pct(rateY),
       比率环比变动:`${delta>=0?'+':''}${(delta*100).toFixed(2)}%`,
       影响比率:`${impactRate>=0?'+':''}${(impactRate*100).toFixed(3)}%`,
@@ -1168,14 +1188,18 @@ function headlineLines(stages, alarms, tDate, srcStory){
 
   // 商户行。注意口径：这里的「影响」是 PO占比 × 该商户比率变动，加总等于**本环节**的
   // 比率变动；环节再乘漏斗前后段系数才是对整体的 pt。所以写「对本环节」，不能写成对整体。
-  const merchantLine=(side)=>{
-    if(side.rows.length){
-      const top=side.rows.slice(0,BROADCAST_PRIO_TOP)
-        .map(r=>`${r['商户名称']} PO${r['本期PO总单量']} ${r['上期比率']}→${r['本期比率']}（对本环节 ${impPt(r['影响比率'])}）`);
-      const rest=side.rows.length-BROADCAST_PRIO_TOP;
-      return `     ${top.join('；')}` + (rest>0?`；另有 ${rest} 家`:'');
-    }
-    return side.reason ? `     ${side.reason}` : '';
+  // 一家一行。数值口径：比率变动是「个百分点」，影响是 PO占比×比率变动，
+  // 加总等于本环节的比率变动 —— 也是百分点，所以两处都说 pt，不混 %。
+  const merchantLines=(side)=>{
+    if(!side.rows.length) return side.reason ? [`     ${side.reason}`] : [];
+    return side.rows.slice(0,BROADCAST_PRIO_TOP).map(r=>{
+      const d   = parseFloat(String(r['比率环比变动']).replace('%',''));
+      const imp = parseFloat(String(r['影响比率']).replace('%',''));
+      return `     ${r['商户名称']} PO ${r['本期PO总单量'].toLocaleString()}笔，`
+           + `${r['上期比率']}→${r['本期比率']}`
+           + `（${d<0?'下降':'上升'} ${Math.abs(d).toFixed(2)} 个百分点；`
+           + `对本环节造成 ${Math.abs(imp).toFixed(2)}pt 的${imp<0?'负向':'正向'}影响）`;
+    });
   };
 
   const stageLine=(side, isMain, up)=>{
@@ -1194,12 +1218,12 @@ function headlineLines(stages, alarms, tDate, srcStory){
     const counter = rising ? s.down : s.up;
     if(main){
       L.push(stageLine(main, true, rising));
-      const ml=merchantLine(main); if(ml) L.push(ml);
+      L.push(...merchantLines(main));
     }
     // 反方向只在够大时才写，免得为凑格式报 0.01pt 的噪声
     if(counter && Math.abs(counter.st.contrib)>=COUNTER_DIR_FLOOR){
       L.push(stageLine(counter, false, !rising));
-      const cl=merchantLine(counter); if(cl) L.push(cl);
+      L.push(...merchantLines(counter));
     }
   }
   return L;
@@ -1210,47 +1234,34 @@ function headlineLines(stages, alarms, tDate, srcStory){
  * 口径必须和 distinctRootCauses() 一致：排除「已解释」，而不是只取「根因」，
  * 否则文案里的数字和后面列出的名字对不上。
  */
-function rootCauseNames(aT,aS){
-  const seen=new Set();
-  for(const a of [...aT,...aS]) if(a._role!=='已解释') seen.add(a['异常指标']);
-  return [...seen].sort((x,y)=>(METRIC_ORDER[x]??999)-(METRIC_ORDER[y]??999));
-}
-
 /**
  * 群消息版播报。
  *
  * 以前是 96 行 / 近 7000 字符，其中 74 行是逐指标逐商户的明细 —— 飞书群里没人看得完，
- * 而这些明细在工作台页面上随时能查。现在只保留「今天该看什么、该找谁」：
- * 结论 → 优先排查（带主要商户）→ 一行异常摘要 → 工作台链接。
+ * 而这些明细在工作台页面上随时能查。现在只讲一件事：
+ * 每个场景涨/跌了多少、主要来自哪个环节、那个环节是哪几家商户造成的。
+ *
+ * 刻意不写「触发异常 N 项 / M 个根因」那种统计行 —— 它既没说异常是什么，
+ * 也没说是谁引起的，读的人拿它没法做任何事；真正可行动的信息就是上面那些商户。
  */
 function broadcastTxt(aT,dT,aS,dS,tDate){
   const P_=P(), d=state.data||{}, stages=d.stages||{};
-  const n=aT.length+aS.length, nRoot=distinctRootCauses(aT,aS);
+  const n=aT.length+aS.length;
   const head=`【转化率${P_.unit}报监控 ${tDate}】`;
-  if(n===0){
-    const L=[head]; L.push(...headlineLines(stages,[],tDate,d.srcStory));
-    L.push('✅ 大盘平稳，无指标触发告警阈值。');
-    return L.join('\n');
-  }
   const lines=[head];
   lines.push(...headlineLines(stages,[...aT,...aS],tDate,d.srcStory));
-  lines.push('');
-  const roots=rootCauseNames(aT,aS);
-  lines.push(`触发异常 ${n} 项，去重后 ${nRoot} 个根因${roots.length?'：'+roots.join('、'):''}`);
+  if(n===0) lines.push('✅ 大盘平稳，无指标触发告警阈值。');
   return lines.join('\n');
 }
 /** 卡片模式用的 markdown 版。内容和文本版一致，只是排版 —— 详略级别不再分两套。 */
 function broadcastMd(aT,dT,aS,dS,tDate){
   const P_=P(), d=state.data||{}, stages=d.stages||{};
-  const n=aT.length+aS.length, nRoot=distinctRootCauses(aT,aS);
+  const n=aT.length+aS.length;
   const title=`# 转化率${P_.unit}报监控 ${tDate}`;
   const head=headlineLines(stages,[...aT,...aS],tDate,d.srcStory)
     .map(x=>x.trim()?(x.startsWith('   ')?'  '+x.trim():x):'').join('\n\n');
   if(n===0) return [title,'',head,'','✅ 大盘平稳，无指标触发告警阈值。'].join('\n');
-
-  const roots=rootCauseNames(aT,aS);
-  return [title,'',head,'',
-    `本期触发异常 **${n}** 项，去重后 **${nRoot}** 个根因${roots.length?'：'+roots.join('、'):''}。`].join('\n');
+  return [title,'',head].join('\n');
 }
 
 /* ============================================================
@@ -1373,18 +1384,6 @@ function kpi(k,v,d,cls){
 /* ---------- 概览：优先排查 callout + 大环节瀑布 ---------- */
 const ptFmt = v => (v>=0?'+':'−')+Math.abs(v*100).toFixed(2)+'pt';
 
-/**
- * 把下钻里的「影响比率」字符串（如 "-0.617%"）转成播报用的 pt 写法。
- * 这个值是 PO占比 × 该商户比率变动，加总等于**本环节**的比率变动 —— 单位就是百分点，
- * 标成 % 会和上面环节行的 pt 对不上。保留 3 位小数：商户级的影响常在 0.1pt 以下，
- * 用 ptFmt 的 2 位会把一堆人显示成 0.00pt。
- */
-const impPt = s => {
-  const v = parseFloat(String(s).replace('%',''));
-  if(!Number.isFinite(v)) return String(s);
-  return (v>=0?'+':'−')+Math.abs(v).toFixed(3)+'pt';
-};
-
 /** 某来源内拖累最多的大环节 + 它的归因子指标。无拖累则返回 null。 */
 function worstStageOf(src, f, alarms){
   if(!f) return null;
@@ -1436,8 +1435,6 @@ function buildSourceStory(stages, mergedSite, hasSite){
     const side=(st, dir)=>{
       if(!st) return null;
       const metric=`${st.code}. ${st.label}`;
-      // 顶层结果指标（如「1. 业务单支付转化率」）不在 DEPS 里，没有漏斗定义就拆不到商户
-      if(!(metric in DEPS)) return {st, metric, rows:[], reason:'该环节没有漏斗定义，无法拆到商户'};
       const rows=drillMetric(mergedSite, src, metric,
                              FRICTION_METRICS.includes(metric), totalPO[src]||0, hasSite, dir);
       return {st, metric, rows,
@@ -1607,8 +1604,8 @@ function renderBlocks(drill, alarms, hasSite){
           <td class="l">${esc(r['商户名称'])} <span class="hint">${esc(r['用户ID'])}</span></td>
           ${site}
           <td>${r['本期PO总单量'].toLocaleString()}</td>
-          <td>${r['进入本环节(单)'].toLocaleString()}${flag}</td>
-          <td>${r['通过本环节(单)'].toLocaleString()}</td>
+          <td>${r['进入本环节(单)']==null?'—':r['进入本环节(单)'].toLocaleString()}${flag}</td>
+          <td>${r['通过本环节(单)']==null?'—':r['通过本环节(单)'].toLocaleString()}</td>
           <td>${esc(r['上期比率'])} → ${esc(r['本期比率'])}</td>
           <td>${esc(r['比率环比变动'])}</td>
           <td class="imp ${impCls}">${esc(r['影响比率'])}</td>
@@ -1658,8 +1655,8 @@ function renderSourceStory(story){
             <td class="l">${esc(r['商户名称'])} <span class="hint">${esc(r['用户ID'])}</span></td>
             <td class="l">${esc(r['站点'])}</td>
             <td>${r['本期PO总单量'].toLocaleString()}</td>
-            <td>${r['进入本环节(单)'].toLocaleString()}${flag}</td>
-            <td>${r['通过本环节(单)'].toLocaleString()}</td>
+            <td>${r['进入本环节(单)']==null?'—':r['进入本环节(单)'].toLocaleString()}${flag}</td>
+            <td>${r['通过本环节(单)']==null?'—':r['通过本环节(单)'].toLocaleString()}</td>
             <td>${esc(r['上期比率'])} → ${esc(r['本期比率'])}</td>
             <td>${esc(r['比率环比变动'])}</td>
             <td class="imp ${impCls}">${esc(r['影响比率'])}</td>
