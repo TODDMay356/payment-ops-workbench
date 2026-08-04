@@ -397,6 +397,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       <!-- 重点商户：按影响绝对值聚合，最该找谁一眼看到 -->
       <div id="topMerchants"></div>
 
+      <!-- 优先排查的商户下钻。放在筛选器之上：它不受筛选控制，
+           摆下面会让人以为筛选也管它。 -->
+      <div id="prioDrillWrap"></div>
+
       <!-- 筛选：明细篇幅长，先收窄再看 -->
       <div class="filterbar" id="filterBar">
         <label class="field"><span>来源</span><select id="fSrc"><option value="">全部</option></select></label>
@@ -652,7 +656,15 @@ const FUNNEL_SUBS = {   // [指标名, 缩进级别]
 };
 const OVERALL_METRIC = '业务单支付成功率';
 // 播报里每个指标最多列几家商户（群消息读不完长名单，完整名单走附件）
-const BROADCAST_TOP_N = 5;
+/** 群消息里每条「优先排查」点几家商户。多了就刷屏，明细在工作台看。 */
+const BROADCAST_PRIO_TOP = 3;
+
+/** 工作台地址。被工作台托管时用它的真实地址，直连打开时给默认端口。 */
+function workbenchUrl(){
+  return (location.protocol==='http:'||location.protocol==='https:')
+    ? location.origin + '/conversion'
+    : 'http://127.0.0.1:5050/conversion';
+}
 // 指标 → 所属大环节 / 缩进层级，供探测与排序使用
 const METRIC_STAGE = {}, METRIC_DEPTH = {}, METRIC_ORDER = {};
 (function(){
@@ -1070,12 +1082,53 @@ function buildWide(merged, hasSite){
 /* ============================================================
    6. 异常探测（对应 detect）
    ============================================================ */
+/** 某来源某指标的 PO 加权总量。下钻算「影响比率」要用。 */
+function totalPOBySource(merged){
+  const m={};
+  merged.forEach(r=>{ const s=r['来源']; m[s]=(m[s]||0)+num(r['PO单数_今']); });
+  return m;
+}
+
+/**
+ * 把「某来源某指标」拆到商户/站点级，按影响绝对值降序。
+ *
+ * 从 detect() 里抽出来的，逻辑一字未改 —— 目的是让「优先排查」那条路也能用。
+ * 优先排查挑的是对整体拖累最大的大环节，它不看告警阈值，所以经常是个没进
+ * alarms 的指标；以前那种情况就只有一句「建议人工排查」，查不到是哪些商户。
+ *
+ * 只保留「变差」方向的商户（摩擦类取上升、通过率类取下降）—— 我们要找的是拖累源。
+ */
+function drillMetric(merged, source, metric, isF, totalPO, hasSite){
+  const recs=[];
+  for(const r of merged.filter(x=>x['来源']===source)){
+    const rateT=num(r[metric+'_今']), rateY=num(r[metric+'_昨']);
+    const delta=rateT-rateY;
+    const po=num(r['PO单数_今']);
+    if(isF && delta<=0) continue;
+    if(!isF && delta>=0) continue;
+    const [dT,nT]=calcFunnel(r,metric,'_今');
+    const impactRate = totalPO ? (po/totalPO)*delta : 0;
+    recs.push({
+      来源:source,异常指标:metric,
+      用户ID:String(r['用户ID']||''),商户名称:String(r['商户名称']||''),
+      站点: hasSite ? String(r['站点']||'') : '(用户ID合计)',
+      本期PO总单量:Math.round(po),
+      '进入本环节(单)':dT,'通过本环节(单)':nT,'是否>PO': dT>po?'是':'否',
+      本期比率:pct(rateT),上期比率:pct(rateY),
+      比率环比变动:`${delta>=0?'+':''}${(delta*100).toFixed(2)}%`,
+      影响比率:`${impactRate>=0?'+':''}${(impactRate*100).toFixed(3)}%`,
+      _impact_abs:Math.abs(impactRate),
+    });
+  }
+  recs.sort((a,b)=>b._impact_abs-a._impact_abs);
+  return recs;
+}
+
 function detect(dfScene, merged, tDate, yDate, hasSite){
   const today = dfScene.filter(o=>o['统计日期']===tDate);
   const yest  = dfScene.filter(o=>o['统计日期']===yDate);
 
-  const srcTotalPO={};
-  merged.forEach(r=>{ const s=r['来源']; srcTotalPO[s]=(srcTotalPO[s]||0)+num(r['PO单数_今']); });
+  const srcTotalPO=totalPOBySource(merged);
 
   const alarms=[], drill=[];
   for(const row of today){
@@ -1094,30 +1147,7 @@ function detect(dfScene, merged, tDate, yDate, hasSite){
     alarms.push({来源:source,异常指标:metric,本期比率:valT,上期比率:valY,
       环比:`${dod>0?'+':''}${(dod*100).toFixed(1)}%`,_is_f:isF,_basis:basis,_dod:dod});
 
-    const totalPO = srcTotalPO[source]||0;
-    const src = merged.filter(r=>r['来源']===source);
-    const recs=[];
-    for(const r of src){
-      const rateT=num(r[metric+'_今']), rateY=num(r[metric+'_昨']);
-      const delta=rateT-rateY;
-      const po=num(r['PO单数_今']);
-      if(isF && delta<=0) continue;
-      if(!isF && delta>=0) continue;
-      const [dT,nT]=calcFunnel(r,metric,'_今');
-      const impactRate = totalPO ? (po/totalPO)*delta : 0;
-      recs.push({
-        来源:source,异常指标:metric,
-        用户ID:String(r['用户ID']||''),商户名称:String(r['商户名称']||''),
-        站点: hasSite ? String(r['站点']||'') : '(用户ID合计)',
-        本期PO总单量:Math.round(po),
-        '进入本环节(单)':dT,'通过本环节(单)':nT,'是否>PO': dT>po?'是':'否',
-        本期比率:pct(rateT),上期比率:pct(rateY),
-        比率环比变动:`${delta>=0?'+':''}${(delta*100).toFixed(2)}%`,
-        影响比率:`${impactRate>=0?'+':''}${(impactRate*100).toFixed(3)}%`,
-        _impact_abs:Math.abs(impactRate),
-      });
-    }
-    recs.sort((a,b)=>b._impact_abs-a._impact_abs);
+    const recs = drillMetric(merged, source, metric, isF, srcTotalPO[source]||0, hasSite);
     recs.forEach(x=>delete x._impact_abs);
     drill.push(...recs);
   }
@@ -1132,37 +1162,8 @@ function detect(dfScene, merged, tDate, yDate, hasSite){
    7. 播报素材（对应 broadcast_txt / broadcast_md）
    ============================================================ */
 function uniq(a){ return [...new Set(a)]; }
-function renderDrillBlock(drill, alarms, dimName){
-  const lines=[`━━ ${dimName}异常 ━━`];
-  if(!drill.length){ lines.push('  (无)'); return lines; }
-  for(const source of uniq(drill.map(d=>d['来源']))){
-    lines.push(`▌${source}`);
-    const sdf=drill.filter(d=>d['来源']===source);
-    for(const metric of uniq(sdf.map(d=>d['异常指标']))){
-      const mdf=sdf.filter(d=>d['异常指标']===metric);
-      const a=alarms.find(x=>x['来源']===source && x['异常指标']===metric);
-      let head=`  ◆ ${metric}`;
-      if(a) head+=`：${fmtVal(a['上期比率'])} → ${fmtVal(a['本期比率'])}（${a['环比']}）`;
-      lines.push(head);
-      // 播报只列影响最大的前 N 家，其余汇总一行——群里没人看得完几十行
-      const shown=mdf.slice(0, BROADCAST_TOP_N);
-      for(const r of shown){
-        const site = r['站点']!=='(用户ID合计)' ? `/${r['站点']}` : '';
-        const flag = r['是否>PO']==='是' ? ' ⚠>PO' : '';
-        lines.push(`    · ${r['商户名称']}(ID:${r['用户ID']})${site} | PO ${r['本期PO总单量']}单 | ${r['上期比率']}→${r['本期比率']} | 影响 ${r['影响比率']}${flag}`);
-      }
-      const rest=mdf.length-shown.length;
-      if(rest>0){
-        const restImp=mdf.slice(BROADCAST_TOP_N)
-          .reduce((s,r)=>s+(parseFloat(String(r['影响比率']).replace('%',''))||0),0);
-        lines.push(`    · …另有 ${rest} 家，合计影响 ${restImp>=0?'+':''}${restImp.toFixed(3)}%（完整名单见附件）`);
-      }
-    }
-  }
-  return lines;
-}
-/** 播报抬头：结论先行——总成功率 + 最该先排查的环节及其归因。 */
-function headlineLines(stages, alarms, tDate){
+/** 播报抬头：结论先行——总成功率 + 最该先排查的环节 + 是哪几家商户在拖。 */
+function headlineLines(stages, alarms, tDate, prioDrill){
   const P_=P(), L=[];
   // 每个来源各报一行（此前只报第一个来源）
   for(const src of orderedSources(stages)){
@@ -1177,88 +1178,73 @@ function headlineLines(stages, alarms, tDate){
     const rank = prios.length>1 ? (idx===0?'【最需优先】':'【其次】') : '';
     L.push(`⚠️ 优先排查${rank}：${p.src} 环节${st.code} ${st.label} ${pct(st.rateY)}→${pct(st.rateT)}（${ptFmt(st.rateT-st.rateY)}，拉低该来源整体 ${ptFmt(st.contrib)}）`);
     if(p.causes.length){
-      p.causes.forEach(c=>L.push(`   └ 归因：${c['异常指标']}（${c['环比']}）`));
+      L.push(`   └ 归因：${p.causes.map(c=>`${c['异常指标']}（${c['环比']}）`).join('、')}`);
     }else{
-      L.push(`   └ ⚠️ 该环节子指标均未告警——存在未被子指标覆盖的因素，建议人工排查`);
+      L.push(`   └ 子指标均未告警，问题在商户侧`);
+    }
+    // 直接点出是哪几家在拖 —— 群里看到通知的人第一个想问的就是这个
+    const pd=(prioDrill||[]).find(x=>x.src===p.src && x.metric===`${st.code}. ${st.label}`);
+    if(pd && pd.rows.length){
+      const top=pd.rows.slice(0,BROADCAST_PRIO_TOP)
+        .map(r=>`${r['商户名称']}(PO${r['本期PO总单量']}, ${r['上期比率']}→${r['本期比率']}, ${r['影响比率']})`);
+      L.push(`   └ 主要商户：${top.join('；')}`);
+      if(pd.rows.length>BROADCAST_PRIO_TOP) L.push(`      另有 ${pd.rows.length-BROADCAST_PRIO_TOP} 家，见工作台明细`);
+    }else if(pd && pd.reason){
+      L.push(`   └ ${pd.reason}`);
     }
   });
-  // 大环节全景：每个来源各一段（各环节贡献相加 = 该来源整体变动）
-  for(const src of orderedSources(stages)){
-    const f=stages[src];
-    if(f.dOverall==null) continue;
-    L.push('');
-    L.push(`大环节贡献（${src}）：`);
-    f.stages.forEach(s=>{
-      if(s.contrib==null) return;
-      L.push(`   ${s.code}. ${s.label} ${pct(s.rateT)}（${ptFmt(s.rateT-s.rateY)}）→ ${s.contrib<0?'拉低':'贡献'}整体 ${ptFmt(s.contrib)}`);
-    });
-  }
   return L;
 }
 
+/**
+ * 根因指标名，去重后按漏斗顺序 —— 播报里用一行带过，不再逐条铺开。
+ * 口径必须和 distinctRootCauses() 一致：排除「已解释」，而不是只取「根因」，
+ * 否则文案里的数字和后面列出的名字对不上。
+ */
+function rootCauseNames(aT,aS){
+  const seen=new Set();
+  for(const a of [...aT,...aS]) if(a._role!=='已解释') seen.add(a['异常指标']);
+  return [...seen].sort((x,y)=>(METRIC_ORDER[x]??999)-(METRIC_ORDER[y]??999));
+}
+
+/**
+ * 群消息版播报。
+ *
+ * 以前是 96 行 / 近 7000 字符，其中 74 行是逐指标逐商户的明细 —— 飞书群里没人看得完，
+ * 而这些明细在工作台页面上随时能查。现在只保留「今天该看什么、该找谁」：
+ * 结论 → 优先排查（带主要商户）→ 一行异常摘要 → 工作台链接。
+ */
 function broadcastTxt(aT,dT,aS,dS,tDate){
-  const P_=P(), stages=(state.data&&state.data.stages)||{};
+  const P_=P(), d=state.data||{}, stages=d.stages||{};
   const n=aT.length+aS.length, nRoot=distinctRootCauses(aT,aS);
   const head=`【转化率${P_.unit}报监控 ${tDate}】`;
   if(n===0){
-    const L=[head]; L.push(...headlineLines(stages,[],tDate));
+    const L=[head]; L.push(...headlineLines(stages,[],tDate,d.prioDrill));
     L.push('✅ 大盘平稳，无指标触发告警阈值。');
     return L.join('\n');
   }
-  let lines=[head];
-  lines.push(...headlineLines(stages,[...aT,...aS],tDate));
+  const lines=[head];
+  lines.push(...headlineLines(stages,[...aT,...aS],tDate,d.prioDrill));
   lines.push('');
-  lines.push(`触发异常：合计行 ${aT.length} 项 / 站点 ${aS.length} 项，去重后 ${nRoot} 个根因`);
-  lines.push('');
-  lines=lines.concat(renderDrillBlock(dT,aT,'一、合计行(用户ID整体)'));
-  lines.push('');
-  lines=lines.concat(renderDrillBlock(dS,aS,'二、站点明细'));
-  lines.push('\n注：告警按根因计数——某项若已被其下级异常解释，不重复计入。');
-  lines.push('完整明细见附件《异常下钻明细》(含合计异常/站点异常两个sheet)。');
+  const roots=rootCauseNames(aT,aS);
+  lines.push(`触发异常 ${n} 项，去重后 ${nRoot} 个根因${roots.length?'：'+roots.join('、'):''}`);
+  lines.push(`明细见工作台 ${workbenchUrl()}`);
   return lines.join('\n');
 }
-function mdTable(drill){
-  const cols=['来源','异常指标','用户ID','商户名称','站点','本期PO总单量','进入本环节(单)','通过本环节(单)','是否>PO','本期比率','上期比率','比率环比变动','影响比率'];
-  if(!drill.length) return '(无)';
-  // 与文本播报一致：每个「来源×指标」只列影响最大的前 N 家
-  const seen=new Map(), rows=[]; let omitted=0;
-  for(const r of drill){
-    const k=r['来源']+'|'+r['异常指标'];
-    const c=(seen.get(k)||0)+1; seen.set(k,c);
-    if(c<=BROADCAST_TOP_N) rows.push(r); else omitted++;
-  }
-  const head='| '+cols.join(' | ')+' |';
-  const sep='| '+cols.map(()=>'---').join(' | ')+' |';
-  const body=rows.map(r=>'| '+cols.map(c=>String(r[c]??'')).join(' | ')+' |').join('\n');
-  const note = omitted ? `\n\n> 每个「来源×指标」只列影响最大的前 ${BROADCAST_TOP_N} 家，另省略 ${omitted} 行，完整名单见导出的 Excel。` : '';
-  return [head,sep,body].join('\n')+note;
-}
+/** 卡片模式用的 markdown 版。内容和文本版一致，只是排版 —— 详略级别不再分两套。 */
 function broadcastMd(aT,dT,aS,dS,tDate){
-  const P_=P(), stages=(state.data&&state.data.stages)||{};
+  const P_=P(), d=state.data||{}, stages=d.stages||{};
   const n=aT.length+aS.length, nRoot=distinctRootCauses(aT,aS);
   const title=`# 转化率${P_.unit}报监控 ${tDate}`;
-  const head=headlineLines(stages,[...aT,...aS],tDate).map(x=>x.trim()?(x.startsWith('   ')?'  '+x.trim():x):'').join('\n\n');
+  const head=headlineLines(stages,[...aT,...aS],tDate,d.prioDrill)
+    .map(x=>x.trim()?(x.startsWith('   ')?'  '+x.trim():x):'').join('\n\n');
   if(n===0) return [title,'',head,'','✅ 大盘平稳，无指标触发告警阈值。'].join('\n');
 
-  // 大环节贡献表：每个来源一张
-  const stageTbls=[];
-  for(const src of orderedSources(stages)){
-    const f=stages[src];
-    if(f.dOverall==null) continue;
-    stageTbls.push(`**${src}** · 业务单支付成功率 ${pct(f.overallT)}（${P_.dod} ${ptFmt(f.dOverall)}）\n\n`+
-      ['| 环节 | 本期 | 上期 | 环比 | 对该来源整体贡献 |','| --- | --- | --- | --- | --- |']
-        .concat(f.stages.filter(s=>s.contrib!=null).map(s=>
-          `| ${s.code}. ${s.label} | ${pct(s.rateT)} | ${pct(s.rateY)} | ${ptFmt(s.rateT-s.rateY)} | ${ptFmt(s.contrib)} |`))
-        .join('\n'));
-  }
-  const md=[title,'',head,'',
-    `本期触发异常：合计行 **${aT.length}** 项 / 站点 **${aS.length}** 项，去重后 **${nRoot}** 个根因。`,''];
-  if(stageTbls.length) md.push('## 一、各来源大环节贡献（每来源内相加恰等于该来源整体变动）\n', stageTbls.join('\n\n'), '');
-  md.push('## 二、合计行异常(用户ID整体维度)\n', mdTable(dT),
-          '\n## 三、站点明细异常\n', mdTable(dS),
-          '\n> 注：因果自下而上——子环节恶化才导致大环节恶化；告警按根因计数，某项若已被其下级异常解释则不重复计入。',
-          '> 本表仅做异常探测与定位，不含归因结论。「是否>PO」=是 表示该环节含退款/重试，属正常。');
-  return md.join('\n');
+  const roots=rootCauseNames(aT,aS);
+  return [title,'',head,'',
+    `本期触发异常 **${n}** 项，去重后 **${nRoot}** 个根因${roots.length?'：'+roots.join('、'):''}。`,
+    '',
+    `[明细见工作台](${workbenchUrl()})`].join('\n');
 }
 
 /* ============================================================
@@ -1308,8 +1294,10 @@ function run(){
   annotateHierarchy(aS,stages);
   annotateHierarchy(aT,stages);
 
+  const prioDrill=buildPrioDrill(stages,[...aT,...aS],mergedSite,hasSite);
+
   state.data={dfScene,mergedSite,mergedTotal,tDate,yDate,hasSite,wide,period:PERIOD,stages,
-              drillSite:dS,drillTotal:dT,alarmSite:aS,alarmTotal:aT};
+              drillSite:dS,drillTotal:dT,alarmSite:aS,alarmTotal:aT,prioDrill};
   render();
   if(typeof syncDateSel==='function') syncDateSel();
   // 解析完不发任何东西，只更新「本次要发的内容」那行；发不发由人点按钮
@@ -1359,6 +1347,7 @@ function render(){
   $('#totCnt').textContent = nTot?`${nTot} 项（根因 ${rootTot}）`:'无';
   $('#siteCnt').textContent = nSite?`${nSite} 项（根因 ${rootSite}）`:'无';
   renderOverview();
+  $('#prioDrillWrap').innerHTML = renderPrioDrill(d.prioDrill);
   $('#totalBlocks').innerHTML = renderBlocks(d.drillTotal, d.alarmTotal, false);
   $('#siteBlocks').innerHTML  = renderBlocks(d.drillSite,  d.alarmSite,  true);
   renderTopMerchants();
@@ -1396,6 +1385,28 @@ function worstStageOf(src, f, alarms){
     seen.add(a['异常指标']); causes.push(a);
   }
   return {src, st, causes};
+}
+
+/**
+ * 给每条「优先排查」算出商户级下钻。
+ *
+ * 优先排查挑的是对该来源整体拖累最大的大环节，判据是 contrib（pt），**不看告警阈值**。
+ * 所以它经常点名一个没进 alarms 的指标 —— 那种情况下 detect() 不会产出任何 drill，
+ * 于是群里通知了「环节4 网关通过率拉低 0.59pt」，页面上却查不到是哪些商户干的。
+ * 这里就是补这一段。
+ */
+function buildPrioDrill(stages, alarms, mergedSite, hasSite){
+  const totalPO=totalPOBySource(mergedSite);
+  return pickPrioritiesPerSource(stages, alarms).map(p=>{
+    const metric=`${p.st.code}. ${p.st.label}`;
+    const base={src:p.src, metric, st:p.st, hasCauses:p.causes.length>0};
+    // 顶层结果指标（如「1. 业务单支付转化率」）不在 DEPS 里，没有漏斗定义就算不出分子分母。
+    // 说清楚原因，别留个空白让人以为又是数据丢了。
+    if(!(metric in DEPS)) return {...base, rows:[], reason:'该环节没有漏斗定义，无法拆到商户'};
+    const rows=drillMetric(mergedSite, p.src, metric,
+                           FRICTION_METRICS.includes(metric), totalPO[p.src]||0, hasSite);
+    return {...base, rows, reason: rows.length ? '' : '该环节没有单个商户在变差，可能是结构变化（各商户占比此消彼长）'};
+  });
 }
 
 /** 逐来源各取其最拖累的大环节，按严重度排序（最负在前）。 */
@@ -1570,6 +1581,61 @@ function renderBlocks(drill, alarms, hasSite){
     html += `<div class="src-block" data-src="${esc(source)}"><div class="src-head">▌ ${esc(source)}</div>${inner}</div>`;
   }
   return html;
+}
+
+/**
+ * 「优先排查」的商户下钻。
+ *
+ * 和下面那两块（合计行 / 站点明细异常）的区别必须写清楚：
+ * 那两块是「过了告警阈值」的指标；这一块是「没过阈值、但对整体拖累最大」的环节，
+ * 播报里点名的就是它。以前这里什么都没有，通知说了却查不到人。
+ */
+function renderPrioDrill(prios){
+  if(!prios || !prios.length) return '';
+  let html='';
+  for(const p of prios){
+    const st=p.st, dPt=st.rateT-st.rateY;
+    const note = p.hasCauses
+      ? '该环节已有子指标告警（见下方明细），这里按商户列出谁在拖累。'
+      : '该环节<b>子指标均未触发告警</b>——异常来自未被子指标覆盖的因素，只能按商户排查。';
+    const body = p.rows.length
+      ? `<div class="tbl-scroll"><table class="dtl">
+          <thead><tr>
+            <th class="l">商户 / ID</th><th class="l">站点</th>
+            <th>本期PO</th><th>进入本环节</th><th>通过本环节</th><th>比率(上期→本期)</th><th>环比变动</th><th>影响比率</th>
+          </tr></thead><tbody>${
+            p.rows.slice(0,20).map(r=>{
+              const impCls = r['影响比率'].startsWith('-')?'neg':'pos';
+              const flag = r['是否>PO']==='是' ? ' <span class="tag-warn" title="该环节含退款/重试">&gt;PO</span>' : '';
+              return `<tr>
+                <td class="l">${esc(r['商户名称'])} <span class="hint">${esc(r['用户ID'])}</span></td>
+                <td class="l">${esc(r['站点'])}</td>
+                <td>${r['本期PO总单量'].toLocaleString()}</td>
+                <td>${r['进入本环节(单)'].toLocaleString()}${flag}</td>
+                <td>${r['通过本环节(单)'].toLocaleString()}</td>
+                <td>${esc(r['上期比率'])} → ${esc(r['本期比率'])}</td>
+                <td>${esc(r['比率环比变动'])}</td>
+                <td class="imp ${impCls}">${esc(r['影响比率'])}</td>
+              </tr>`;
+            }).join('')
+          }</tbody></table></div>${
+            p.rows.length>20 ? `<div class="hint" style="margin-top:6px">仅显示影响最大的 20 个，共 ${p.rows.length} 个</div>` : ''
+          }`
+      : `<div class="empty">${esc(p.reason||'无可下钻的商户')}</div>`;
+
+    html += `<div class="metric-block" data-src="${esc(p.src)}" data-metric="${esc(p.metric)}">
+      <div class="metric-head">
+        <span>◆ ${esc(p.src)} · ${esc(p.metric)}</span>
+        <span class="mv">${pct(st.rateY)} → <b>${pct(st.rateT)}</b></span>
+        <span class="pill drop">${ptFmt(dPt)}</span>
+        <span class="hint">拉低该来源整体 ${ptFmt(st.contrib)}</span>
+      </div>
+      <div class="hint" style="margin:2px 0 8px">${note}</div>
+      ${body}
+    </div>`;
+  }
+  return `<div class="sec-title">优先排查 · 拖累最大的环节 <span class="cnt">${prios.length} 项</span></div>
+    <div class="src-block">${html}</div>`;
 }
 
 /* ---------- 重点商户：按影响绝对值聚合，谁最该先找一眼看到 ---------- */
