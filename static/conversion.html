@@ -655,16 +655,12 @@ const FUNNEL_SUBS = {   // [指标名, 缩进级别]
        ['4.2.1 风控3DS网关通过率',1],['4.2.2 政策3DS网关通过率',1]],
 };
 const OVERALL_METRIC = '业务单支付成功率';
-// 播报里每个指标最多列几家商户（群消息读不完长名单，完整名单走附件）
-/** 群消息里每条「优先排查」点几家商户。多了就刷屏，明细在工作台看。 */
+/**
+ * 群消息里每条环节点几家商户。多了就刷屏，完整名单在工作台自己看。
+ * 注意：播报里**不要**放工作台地址 —— 那是本机地址（127.0.0.1），
+ * 群里其他人打不开，也没必要把内部工具暴露给收消息的人。
+ */
 const BROADCAST_PRIO_TOP = 3;
-
-/** 工作台地址。被工作台托管时用它的真实地址，直连打开时给默认端口。 */
-function workbenchUrl(){
-  return (location.protocol==='http:'||location.protocol==='https:')
-    ? location.origin + '/conversion'
-    : 'http://127.0.0.1:5050/conversion';
-}
 // 指标 → 所属大环节 / 缩进层级，供探测与排序使用
 const METRIC_STAGE = {}, METRIC_DEPTH = {}, METRIC_ORDER = {};
 (function(){
@@ -1241,7 +1237,6 @@ function broadcastTxt(aT,dT,aS,dS,tDate){
   lines.push('');
   const roots=rootCauseNames(aT,aS);
   lines.push(`触发异常 ${n} 项，去重后 ${nRoot} 个根因${roots.length?'：'+roots.join('、'):''}`);
-  lines.push(`明细见工作台 ${workbenchUrl()}`);
   return lines.join('\n');
 }
 /** 卡片模式用的 markdown 版。内容和文本版一致，只是排版 —— 详略级别不再分两套。 */
@@ -1255,9 +1250,7 @@ function broadcastMd(aT,dT,aS,dS,tDate){
 
   const roots=rootCauseNames(aT,aS);
   return [title,'',head,'',
-    `本期触发异常 **${n}** 项，去重后 **${nRoot}** 个根因${roots.length?'：'+roots.join('、'):''}。`,
-    '',
-    `[明细见工作台](${workbenchUrl()})`].join('\n');
+    `本期触发异常 **${n}** 项，去重后 **${nRoot}** 个根因${roots.length?'：'+roots.join('、'):''}。`].join('\n');
 }
 
 /* ============================================================
