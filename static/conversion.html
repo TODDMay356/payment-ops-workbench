@@ -1210,6 +1210,16 @@ function headlineLines(stages, alarms, tDate, srcStory){
          + `（${ptFmt(st.rateT-st.rateY)}，${st.contrib<0?'拉低':'拉动'}整体 ${ptFmt(st.contrib)}）`;
   };
 
+  // 大环节是结果，不是原因。把造成它变动的子/孙环节写出来，商户也是按最细那层拆的。
+  // 末尾点明按哪一层拆 —— 否则下面商户行的「对本环节」会被当成大环节，
+  // 而那个数是对 leaf 指标的（可能比大环节的变动大得多）。
+  const chainLine=(side)=>{
+    if(!side.chain || !side.chain.length) return '';
+    const path=side.chain.map(c=>`${c.metric} ${pct(c.rateY)}→${pct(c.rateT)}（${ptFmt(c.delta)}）`);
+    const code=METRIC_CODE[side.leaf]||side.leaf;
+    return `     └ 穿透：${path.join(' → ')}；以下商户按 ${code} 拆`;
+  };
+
   for(const s of (srcStory||[])){
     L.push(`■ ${s.src}｜业务单支付成功率 ${pct(s.overallT)}（${P_.dod} ${ptFmt(s.dOverall)}，上期 ${pct(s.overallY)}）`);
     // 和整体同向的那侧先写 —— 那才是"为什么涨/为什么跌"的答案
@@ -1218,11 +1228,13 @@ function headlineLines(stages, alarms, tDate, srcStory){
     const counter = rising ? s.down : s.up;
     if(main){
       L.push(stageLine(main, true, rising));
+      const c=chainLine(main); if(c) L.push(c);
       L.push(...merchantLines(main));
     }
     // 反方向只在够大时才写，免得为凑格式报 0.01pt 的噪声
     if(counter && Math.abs(counter.st.contrib)>=COUNTER_DIR_FLOOR){
       L.push(stageLine(counter, false, !rising));
+      const c=chainLine(counter); if(c) L.push(c);
       L.push(...merchantLines(counter));
     }
   }
@@ -1311,7 +1323,7 @@ function run(){
   annotateHierarchy(aS,stages);
   annotateHierarchy(aT,stages);
 
-  const srcStory=buildSourceStory(stages,mergedSite,hasSite);
+  const srcStory=buildSourceStory(stages,mergedSite,hasSite,dfScene,tDate,yDate);
 
   state.data={dfScene,mergedSite,mergedTotal,tDate,yDate,hasSite,wide,period:PERIOD,stages,
               drillSite:dS,drillTotal:dT,alarmSite:aS,alarmTotal:aT,srcStory};
@@ -1423,7 +1435,45 @@ const COUNTER_DIR_FLOOR = 0.001;   // 0.1pt
  *      于是整体在涨的来源播报里一个字都没有。这里按 contrib 排序取首尾，涨跌都拿。
  *   2. 涨的那侧下钻要反方向（找变好的商户），所以 drillMetric 带 dir。
  */
-function buildSourceStory(stages, mergedSite, hasSite){
+/** 取某来源某指标在某期的场景级比率。 */
+function sceneRate(dfScene, src, metric, date){
+  const r=dfScene.find(o=>trim(o['来源'])===src && trim(o['类型'])===metric && String(o['统计日期'])===date);
+  return r ? toRate(r['当期值']) : null;
+}
+
+/**
+ * 从大环节往下找「是哪个子环节造成的」，一路穿到最细一层。
+ *
+ * 只说「环节3 网关提交率跌了」没法行动 —— 得知道是它下面哪一项在拖。
+ * 判据是子指标自己的变动方向，**必须按指标类型判**：摩擦类（如 3.2 3DS交易占比）
+ * 上升才是变差，通过率类下降才是变差。同向里取变动最大的那个，再继续往下钻。
+ *
+ * 返回 [{metric, rateY, rateT, delta}, ...]，从子环节到孙环节；没有可归因的下级则为空。
+ */
+function descendToCause(dfScene, src, stageCode, tDate, yDate, wantWorse, startMetric){
+  const chain=[];
+  let kids = startMetric ? (METRIC_CHILDREN[startMetric]||[])
+                         : (FUNNEL_SUBS[stageCode]||[]).filter(x=>x[1]===0).map(x=>x[0]);
+  let guard=0;
+  while(kids.length && guard++ < 5){
+    let best=null;
+    for(const k of kids){
+      const t=sceneRate(dfScene,src,k,tDate), y=sceneRate(dfScene,src,k,yDate);
+      if(t==null||y==null) continue;
+      const delta=t-y;
+      if(delta===0) continue;
+      const worse = FRICTION_METRICS.includes(k) ? delta>0 : delta<0;
+      if(worse!==wantWorse) continue;                    // 方向不对，不是它造成的
+      if(!best || Math.abs(delta)>Math.abs(best.delta)) best={metric:k, rateY:y, rateT:t, delta};
+    }
+    if(!best) break;
+    chain.push(best);
+    kids = METRIC_CHILDREN[best.metric]||[];
+  }
+  return chain;
+}
+
+function buildSourceStory(stages, mergedSite, hasSite, dfScene, tDate, yDate){
   const totalPO=totalPOBySource(mergedSite);
   const out=[];
   for(const src of orderedSources(stages)){
@@ -1434,10 +1484,13 @@ function buildSourceStory(stages, mergedSite, hasSite){
 
     const side=(st, dir)=>{
       if(!st) return null;
-      const metric=`${st.code}. ${st.label}`;
-      const rows=drillMetric(mergedSite, src, metric,
-                             FRICTION_METRICS.includes(metric), totalPO[src]||0, hasSite, dir);
-      return {st, metric, rows,
+      const stageMetric=`${st.code}. ${st.label}`;
+      // 先穿透到具体是哪个子/孙环节，商户就按那一层拆 —— 只说「大环节跌了」没法行动
+      const chain=descendToCause(dfScene, src, st.code, tDate, yDate, dir!=='better');
+      const leaf=chain.length ? chain[chain.length-1].metric : stageMetric;
+      const rows=drillMetric(mergedSite, src, leaf,
+                             FRICTION_METRICS.includes(leaf), totalPO[src]||0, hasSite, dir);
+      return {st, metric:stageMetric, chain, leaf, rows,
               reason: rows.length ? '' : '没有单个商户往这个方向动，变化来自各商户占比此消彼长'};
     };
 
@@ -1669,6 +1722,12 @@ function renderSourceStory(story){
   const sideBlock=(side, up)=>{
     if(!side) return '';
     const st=side.st, dPt=st.rateT-st.rateY;
+    // 穿透链：大环节是结果，真正动的是下面某一层；商户表也是按 leaf 那层拆的
+    const chain = (side.chain||[]).length
+      ? `<div class="hint" style="margin:2px 0 8px">穿透：${
+          side.chain.map(c=>`<b>${esc(c.metric)}</b> ${pct(c.rateY)}→${pct(c.rateT)}（${ptFmt(c.delta)}）`).join(' → ')
+        }　·　下表按 <b>${esc(side.leaf)}</b> 拆到商户</div>`
+      : '';
     return `<div class="metric-block" data-metric="${esc(side.metric)}">
       <div class="metric-head">
         <span>${up?'▲ 拉升':'▼ 拖累'} ${esc(side.metric)}</span>
@@ -1676,6 +1735,7 @@ function renderSourceStory(story){
         <span class="pill ${up?'rise':'drop'}">${ptFmt(dPt)}</span>
         <span class="hint">${st.contrib<0?'拉低':'拉动'}该来源整体 ${ptFmt(st.contrib)}</span>
       </div>
+      ${chain}
       ${side.rows.length ? table(side.rows) : `<div class="empty">${esc(side.reason||'无可下钻的商户')}</div>`}
     </div>`;
   };
