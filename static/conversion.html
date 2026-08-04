@@ -1096,16 +1096,20 @@ function totalPOBySource(merged){
  * 优先排查挑的是对整体拖累最大的大环节，它不看告警阈值，所以经常是个没进
  * alarms 的指标；以前那种情况就只有一句「建议人工排查」，查不到是哪些商户。
  *
- * 只保留「变差」方向的商户（摩擦类取上升、通过率类取下降）—— 我们要找的是拖累源。
+ * dir='worse'（默认）留变差的商户 —— 找拖累源，detect() 走这条；
+ * dir='better' 留变好的 —— 播报要回答「涨是谁拉起来的」，走这条。
+ * 判断要看指标类型：摩擦类（3DS 占比这种）上升才是变差，通过率类下降才是变差。
  */
-function drillMetric(merged, source, metric, isF, totalPO, hasSite){
+function drillMetric(merged, source, metric, isF, totalPO, hasSite, dir){
+  const wantWorse = dir!=='better';
   const recs=[];
   for(const r of merged.filter(x=>x['来源']===source)){
     const rateT=num(r[metric+'_今']), rateY=num(r[metric+'_昨']);
     const delta=rateT-rateY;
     const po=num(r['PO单数_今']);
-    if(isF && delta<=0) continue;
-    if(!isF && delta>=0) continue;
+    // 摩擦类涨=坏、通过率类跌=坏；取反就是"变好"
+    const worse = isF ? delta>0 : delta<0;
+    if(delta===0 || worse!==wantWorse) continue;
     const [dT,nT]=calcFunnel(r,metric,'_今');
     const impactRate = totalPO ? (po/totalPO)*delta : 0;
     recs.push({
@@ -1163,36 +1167,45 @@ function detect(dfScene, merged, tDate, yDate, hasSite){
    ============================================================ */
 function uniq(a){ return [...new Set(a)]; }
 /** 播报抬头：结论先行——总成功率 + 最该先排查的环节 + 是哪几家商户在拖。 */
-function headlineLines(stages, alarms, tDate, prioDrill){
+function headlineLines(stages, alarms, tDate, srcStory){
   const P_=P(), L=[];
-  // 每个来源各报一行（此前只报第一个来源）
-  for(const src of orderedSources(stages)){
-    const f=stages[src];
-    L.push(`${src}｜业务单支付成功率 ${pct(f.overallT)}` +
-      (f.dOverall!=null?`（${P_.dod} ${ptFmt(f.dOverall)}，上期 ${pct(f.overallY)}）`:''));
+
+  // 商户行。注意口径：这里的「影响」是 PO占比 × 该商户比率变动，加总等于**本环节**的
+  // 比率变动；环节再乘漏斗前后段系数才是对整体的 pt。所以写「对本环节」，不能写成对整体。
+  const merchantLine=(side)=>{
+    if(side.rows.length){
+      const top=side.rows.slice(0,BROADCAST_PRIO_TOP)
+        .map(r=>`${r['商户名称']} PO${r['本期PO总单量']} ${r['上期比率']}→${r['本期比率']}（对本环节 ${impPt(r['影响比率'])}）`);
+      const rest=side.rows.length-BROADCAST_PRIO_TOP;
+      return `     ${top.join('；')}` + (rest>0?`；另有 ${rest} 家`:'');
+    }
+    return side.reason ? `     ${side.reason}` : '';
+  };
+
+  const stageLine=(side, isMain, up)=>{
+    const st=side.st;
+    const verb = up ? (isMain?'主要来自':'同期拉升') : (isMain?'主要来自':'同期拖累');
+    const arrow = up ? '↑' : '↓';
+    return `  ${arrow} ${verb} 环节${st.code} ${st.label} ${pct(st.rateY)}→${pct(st.rateT)}`
+         + `（${ptFmt(st.rateT-st.rateY)}，${st.contrib<0?'拉低':'拉动'}整体 ${ptFmt(st.contrib)}）`;
+  };
+
+  for(const s of (srcStory||[])){
+    L.push(`■ ${s.src}｜业务单支付成功率 ${pct(s.overallT)}（${P_.dod} ${ptFmt(s.dOverall)}，上期 ${pct(s.overallY)}）`);
+    // 和整体同向的那侧先写 —— 那才是"为什么涨/为什么跌"的答案
+    const rising = s.dOverall>=0;
+    const main = rising ? s.up : s.down;
+    const counter = rising ? s.down : s.up;
+    if(main){
+      L.push(stageLine(main, true, rising));
+      const ml=merchantLine(main); if(ml) L.push(ml);
+    }
+    // 反方向只在够大时才写，免得为凑格式报 0.01pt 的噪声
+    if(counter && Math.abs(counter.st.contrib)>=COUNTER_DIR_FLOOR){
+      L.push(stageLine(counter, false, !rising));
+      const cl=merchantLine(counter); if(cl) L.push(cl);
+    }
   }
-  // 每个在拖累的来源各给一条优先排查（与网页概览一致）
-  const prios=pickPrioritiesPerSource(stages,alarms);
-  prios.forEach((p,idx)=>{
-    const st=p.st;
-    const rank = prios.length>1 ? (idx===0?'【最需优先】':'【其次】') : '';
-    L.push(`⚠️ 优先排查${rank}：${p.src} 环节${st.code} ${st.label} ${pct(st.rateY)}→${pct(st.rateT)}（${ptFmt(st.rateT-st.rateY)}，拉低该来源整体 ${ptFmt(st.contrib)}）`);
-    if(p.causes.length){
-      L.push(`   └ 归因：${p.causes.map(c=>`${c['异常指标']}（${c['环比']}）`).join('、')}`);
-    }else{
-      L.push(`   └ 子指标均未告警，问题在商户侧`);
-    }
-    // 直接点出是哪几家在拖 —— 群里看到通知的人第一个想问的就是这个
-    const pd=(prioDrill||[]).find(x=>x.src===p.src && x.metric===`${st.code}. ${st.label}`);
-    if(pd && pd.rows.length){
-      const top=pd.rows.slice(0,BROADCAST_PRIO_TOP)
-        .map(r=>`${r['商户名称']}(PO${r['本期PO总单量']}, ${r['上期比率']}→${r['本期比率']}, ${r['影响比率']})`);
-      L.push(`   └ 主要商户：${top.join('；')}`);
-      if(pd.rows.length>BROADCAST_PRIO_TOP) L.push(`      另有 ${pd.rows.length-BROADCAST_PRIO_TOP} 家，见工作台明细`);
-    }else if(pd && pd.reason){
-      L.push(`   └ ${pd.reason}`);
-    }
-  });
   return L;
 }
 
@@ -1219,12 +1232,12 @@ function broadcastTxt(aT,dT,aS,dS,tDate){
   const n=aT.length+aS.length, nRoot=distinctRootCauses(aT,aS);
   const head=`【转化率${P_.unit}报监控 ${tDate}】`;
   if(n===0){
-    const L=[head]; L.push(...headlineLines(stages,[],tDate,d.prioDrill));
+    const L=[head]; L.push(...headlineLines(stages,[],tDate,d.srcStory));
     L.push('✅ 大盘平稳，无指标触发告警阈值。');
     return L.join('\n');
   }
   const lines=[head];
-  lines.push(...headlineLines(stages,[...aT,...aS],tDate,d.prioDrill));
+  lines.push(...headlineLines(stages,[...aT,...aS],tDate,d.srcStory));
   lines.push('');
   const roots=rootCauseNames(aT,aS);
   lines.push(`触发异常 ${n} 项，去重后 ${nRoot} 个根因${roots.length?'：'+roots.join('、'):''}`);
@@ -1236,7 +1249,7 @@ function broadcastMd(aT,dT,aS,dS,tDate){
   const P_=P(), d=state.data||{}, stages=d.stages||{};
   const n=aT.length+aS.length, nRoot=distinctRootCauses(aT,aS);
   const title=`# 转化率${P_.unit}报监控 ${tDate}`;
-  const head=headlineLines(stages,[...aT,...aS],tDate,d.prioDrill)
+  const head=headlineLines(stages,[...aT,...aS],tDate,d.srcStory)
     .map(x=>x.trim()?(x.startsWith('   ')?'  '+x.trim():x):'').join('\n\n');
   if(n===0) return [title,'',head,'','✅ 大盘平稳，无指标触发告警阈值。'].join('\n');
 
@@ -1294,10 +1307,10 @@ function run(){
   annotateHierarchy(aS,stages);
   annotateHierarchy(aT,stages);
 
-  const prioDrill=buildPrioDrill(stages,[...aT,...aS],mergedSite,hasSite);
+  const srcStory=buildSourceStory(stages,mergedSite,hasSite);
 
   state.data={dfScene,mergedSite,mergedTotal,tDate,yDate,hasSite,wide,period:PERIOD,stages,
-              drillSite:dS,drillTotal:dT,alarmSite:aS,alarmTotal:aT,prioDrill};
+              drillSite:dS,drillTotal:dT,alarmSite:aS,alarmTotal:aT,srcStory};
   render();
   if(typeof syncDateSel==='function') syncDateSel();
   // 解析完不发任何东西，只更新「本次要发的内容」那行；发不发由人点按钮
@@ -1347,7 +1360,7 @@ function render(){
   $('#totCnt').textContent = nTot?`${nTot} 项（根因 ${rootTot}）`:'无';
   $('#siteCnt').textContent = nSite?`${nSite} 项（根因 ${rootSite}）`:'无';
   renderOverview();
-  $('#prioDrillWrap').innerHTML = renderPrioDrill(d.prioDrill);
+  $('#prioDrillWrap').innerHTML = renderSourceStory(d.srcStory);
   $('#totalBlocks').innerHTML = renderBlocks(d.drillTotal, d.alarmTotal, false);
   $('#siteBlocks').innerHTML  = renderBlocks(d.drillSite,  d.alarmSite,  true);
   renderTopMerchants();
@@ -1366,6 +1379,18 @@ function kpi(k,v,d,cls){
 
 /* ---------- 概览：优先排查 callout + 大环节瀑布 ---------- */
 const ptFmt = v => (v>=0?'+':'−')+Math.abs(v*100).toFixed(2)+'pt';
+
+/**
+ * 把下钻里的「影响比率」字符串（如 "-0.617%"）转成播报用的 pt 写法。
+ * 这个值是 PO占比 × 该商户比率变动，加总等于**本环节**的比率变动 —— 单位就是百分点，
+ * 标成 % 会和上面环节行的 pt 对不上。保留 3 位小数：商户级的影响常在 0.1pt 以下，
+ * 用 ptFmt 的 2 位会把一堆人显示成 0.00pt。
+ */
+const impPt = s => {
+  const v = parseFloat(String(s).replace('%',''));
+  if(!Number.isFinite(v)) return String(s);
+  return (v>=0?'+':'−')+Math.abs(v).toFixed(3)+'pt';
+};
 
 /** 某来源内拖累最多的大环节 + 它的归因子指标。无拖累则返回 null。 */
 function worstStageOf(src, f, alarms){
@@ -1395,18 +1420,46 @@ function worstStageOf(src, f, alarms){
  * 于是群里通知了「环节4 网关通过率拉低 0.59pt」，页面上却查不到是哪些商户干的。
  * 这里就是补这一段。
  */
-function buildPrioDrill(stages, alarms, mergedSite, hasSite){
+/** 反方向那段低于这个幅度就不写 —— 免得为了凑格式硬报 0.01pt 的噪声。 */
+const COUNTER_DIR_FLOOR = 0.001;   // 0.1pt
+
+/**
+ * 每个来源一个「故事」：整体涨了还是跌了，主要是哪个环节，那个环节又是哪几家商户。
+ *
+ * 取代原来的 buildPrioDrill()。两点不同：
+ *   1. 不再只看拖累。原来走 worstStageOf()，它 `contrib>=0 就 return null`，
+ *      于是整体在涨的来源播报里一个字都没有。这里按 contrib 排序取首尾，涨跌都拿。
+ *   2. 涨的那侧下钻要反方向（找变好的商户），所以 drillMetric 带 dir。
+ */
+function buildSourceStory(stages, mergedSite, hasSite){
   const totalPO=totalPOBySource(mergedSite);
-  return pickPrioritiesPerSource(stages, alarms).map(p=>{
-    const metric=`${p.st.code}. ${p.st.label}`;
-    const base={src:p.src, metric, st:p.st, hasCauses:p.causes.length>0};
-    // 顶层结果指标（如「1. 业务单支付转化率」）不在 DEPS 里，没有漏斗定义就算不出分子分母。
-    // 说清楚原因，别留个空白让人以为又是数据丢了。
-    if(!(metric in DEPS)) return {...base, rows:[], reason:'该环节没有漏斗定义，无法拆到商户'};
-    const rows=drillMetric(mergedSite, p.src, metric,
-                           FRICTION_METRICS.includes(metric), totalPO[p.src]||0, hasSite);
-    return {...base, rows, reason: rows.length ? '' : '该环节没有单个商户在变差，可能是结构变化（各商户占比此消彼长）'};
-  });
+  const out=[];
+  for(const src of orderedSources(stages)){
+    const f=stages[src];
+    if(!f || f.dOverall==null) continue;          // 没有可比期，说不了变化
+    const ss=f.stages.filter(s=>s.contrib!=null).slice().sort((a,b)=>b.contrib-a.contrib);
+    if(!ss.length) continue;
+
+    const side=(st, dir)=>{
+      if(!st) return null;
+      const metric=`${st.code}. ${st.label}`;
+      // 顶层结果指标（如「1. 业务单支付转化率」）不在 DEPS 里，没有漏斗定义就拆不到商户
+      if(!(metric in DEPS)) return {st, metric, rows:[], reason:'该环节没有漏斗定义，无法拆到商户'};
+      const rows=drillMetric(mergedSite, src, metric,
+                             FRICTION_METRICS.includes(metric), totalPO[src]||0, hasSite, dir);
+      return {st, metric, rows,
+              reason: rows.length ? '' : '没有单个商户往这个方向动，变化来自各商户占比此消彼长'};
+    };
+
+    const top=ss[0], bottom=ss[ss.length-1];
+    out.push({
+      src, dOverall:f.dOverall, overallT:f.overallT, overallY:f.overallY,
+      up:   top.contrib>0    ? side(top,'better')    : null,
+      down: bottom.contrib<0 ? side(bottom,'worse')  : null,
+    });
+  }
+  // 跌得最狠的来源排前面
+  return out.sort((a,b)=>a.dOverall-b.dOverall);
 }
 
 /** 逐来源各取其最拖累的大环节，按严重度排序（最负在前）。 */
@@ -1590,52 +1643,65 @@ function renderBlocks(drill, alarms, hasSite){
  * 那两块是「过了告警阈值」的指标；这一块是「没过阈值、但对整体拖累最大」的环节，
  * 播报里点名的就是它。以前这里什么都没有，通知说了却查不到人。
  */
-function renderPrioDrill(prios){
-  if(!prios || !prios.length) return '';
-  let html='';
-  for(const p of prios){
-    const st=p.st, dPt=st.rateT-st.rateY;
-    const note = p.hasCauses
-      ? '该环节已有子指标告警（见下方明细），这里按商户列出谁在拖累。'
-      : '该环节<b>子指标均未触发告警</b>——异常来自未被子指标覆盖的因素，只能按商户排查。';
-    const body = p.rows.length
-      ? `<div class="tbl-scroll"><table class="dtl">
-          <thead><tr>
-            <th class="l">商户 / ID</th><th class="l">站点</th>
-            <th>本期PO</th><th>进入本环节</th><th>通过本环节</th><th>比率(上期→本期)</th><th>环比变动</th><th>影响比率</th>
-          </tr></thead><tbody>${
-            p.rows.slice(0,20).map(r=>{
-              const impCls = r['影响比率'].startsWith('-')?'neg':'pos';
-              const flag = r['是否>PO']==='是' ? ' <span class="tag-warn" title="该环节含退款/重试">&gt;PO</span>' : '';
-              return `<tr>
-                <td class="l">${esc(r['商户名称'])} <span class="hint">${esc(r['用户ID'])}</span></td>
-                <td class="l">${esc(r['站点'])}</td>
-                <td>${r['本期PO总单量'].toLocaleString()}</td>
-                <td>${r['进入本环节(单)'].toLocaleString()}${flag}</td>
-                <td>${r['通过本环节(单)'].toLocaleString()}</td>
-                <td>${esc(r['上期比率'])} → ${esc(r['本期比率'])}</td>
-                <td>${esc(r['比率环比变动'])}</td>
-                <td class="imp ${impCls}">${esc(r['影响比率'])}</td>
-              </tr>`;
-            }).join('')
-          }</tbody></table></div>${
-            p.rows.length>20 ? `<div class="hint" style="margin-top:6px">仅显示影响最大的 20 个，共 ${p.rows.length} 个</div>` : ''
-          }`
-      : `<div class="empty">${esc(p.reason||'无可下钻的商户')}</div>`;
+/**
+ * 「每来源一个故事」的页面版：整体涨/跌，主因是哪个环节，那个环节又是哪几家商户。
+ *
+ * 和下面两块（合计行/站点明细异常）的区别：那两块是**过了告警阈值**的指标；
+ * 这一块按对整体的 pt 拖累/拉动挑环节，不看阈值 —— 播报里点名的就是它。
+ * 之前这里只渲染拖累侧，整体在涨的来源一个字都没有。
+ */
+function renderSourceStory(story){
+  if(!story || !story.length) return '';
 
-    html += `<div class="metric-block" data-src="${esc(p.src)}" data-metric="${esc(p.metric)}">
+  const table=(rows)=>`<div class="tbl-scroll"><table class="dtl">
+      <thead><tr>
+        <th class="l">商户 / ID</th><th class="l">站点</th>
+        <th>本期PO</th><th>进入本环节</th><th>通过本环节</th><th>比率(上期→本期)</th><th>环比变动</th><th>对本环节影响</th>
+      </tr></thead><tbody>${
+        rows.slice(0,20).map(r=>{
+          const impCls = r['影响比率'].startsWith('-')?'neg':'pos';
+          const flag = r['是否>PO']==='是' ? ' <span class="tag-warn" title="该环节含退款/重试">&gt;PO</span>' : '';
+          return `<tr>
+            <td class="l">${esc(r['商户名称'])} <span class="hint">${esc(r['用户ID'])}</span></td>
+            <td class="l">${esc(r['站点'])}</td>
+            <td>${r['本期PO总单量'].toLocaleString()}</td>
+            <td>${r['进入本环节(单)'].toLocaleString()}${flag}</td>
+            <td>${r['通过本环节(单)'].toLocaleString()}</td>
+            <td>${esc(r['上期比率'])} → ${esc(r['本期比率'])}</td>
+            <td>${esc(r['比率环比变动'])}</td>
+            <td class="imp ${impCls}">${esc(r['影响比率'])}</td>
+          </tr>`;
+        }).join('')
+      }</tbody></table></div>${
+        rows.length>20 ? `<div class="hint" style="margin-top:6px">仅显示影响最大的 20 个，共 ${rows.length} 个</div>` : ''
+      }`;
+
+  const sideBlock=(side, up)=>{
+    if(!side) return '';
+    const st=side.st, dPt=st.rateT-st.rateY;
+    return `<div class="metric-block" data-metric="${esc(side.metric)}">
       <div class="metric-head">
-        <span>◆ ${esc(p.src)} · ${esc(p.metric)}</span>
+        <span>${up?'▲ 拉升':'▼ 拖累'} ${esc(side.metric)}</span>
         <span class="mv">${pct(st.rateY)} → <b>${pct(st.rateT)}</b></span>
-        <span class="pill drop">${ptFmt(dPt)}</span>
-        <span class="hint">拉低该来源整体 ${ptFmt(st.contrib)}</span>
+        <span class="pill ${up?'rise':'drop'}">${ptFmt(dPt)}</span>
+        <span class="hint">${st.contrib<0?'拉低':'拉动'}该来源整体 ${ptFmt(st.contrib)}</span>
       </div>
-      <div class="hint" style="margin:2px 0 8px">${note}</div>
-      ${body}
+      ${side.rows.length ? table(side.rows) : `<div class="empty">${esc(side.reason||'无可下钻的商户')}</div>`}
     </div>`;
-  }
-  return `<div class="sec-title">优先排查 · 拖累最大的环节 <span class="cnt">${prios.length} 项</span></div>
-    <div class="src-block">${html}</div>`;
+  };
+
+  const blocks = story.map(s=>{
+    const rising = s.dOverall>=0;
+    // 和整体同向的那侧先渲染 —— 那才是"为什么涨/为什么跌"的答案
+    const order = rising ? [[s.up,true],[s.down,false]] : [[s.down,false],[s.up,true]];
+    return `<div class="src-block" data-src="${esc(s.src)}">
+      <div class="src-head">▌ ${esc(s.src)} · 业务单支付成功率 ${pct(s.overallT)}
+        <span class="pill ${rising?'rise':'drop'}" style="margin-left:8px">${ptFmt(s.dOverall)}</span></div>
+      ${order.map(([side,up])=>sideBlock(side,up)).join('')}
+    </div>`;
+  }).join('');
+
+  return `<div class="sec-title">按场景看 · 涨跌各自由谁造成 <span class="cnt">${story.length} 个来源</span></div>${blocks}`;
 }
 
 /* ---------- 重点商户：按影响绝对值聚合，谁最该先找一眼看到 ---------- */
