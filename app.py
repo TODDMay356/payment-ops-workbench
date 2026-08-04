@@ -437,18 +437,35 @@ def _order_monitor_status() -> dict:
 
 _deps_cache: dict = {}
 
+# 出单监控脚本要的三个包。注意 xlrd：pandas 是按文件内容的魔数认格式的，
+# 报表如果是老的 .xls（OLE2），pandas 会去找 xlrd —— 光有 openpyxl 不够，
+# openpyxl 只管 .xlsx。反过来 xlrd 2.x 也只管 .xls，两个都得有。
+_OM_DEPS = ("pandas", "openpyxl", "xlrd")
+
+_DEP_PROBE = (
+    "import importlib.util, sys\n"
+    "print(','.join(m for m in sys.argv[1:] if importlib.util.find_spec(m) is None))\n"
+)
+
 
 def _check_order_monitor_deps(py: str) -> tuple[bool, str]:
-    """确认那个解释器里有 pandas / openpyxl。结果缓存，别每次刷状态都起进程。"""
+    """
+    确认那个解释器里三个包都在，并且**说清楚少的是哪个**。
+    结果缓存，别每次刷状态都起进程。
+    """
     if py in _deps_cache:
         return _deps_cache[py]
     try:
         r = subprocess.run(
-            [py, "-c", "import pandas, openpyxl"],
-            capture_output=True, timeout=30,
+            [py, "-c", _DEP_PROBE, *_OM_DEPS],
+            capture_output=True, text=True, timeout=30,
         )
-        ok = r.returncode == 0
-        msg = "" if ok else "缺少 pandas / openpyxl"
+        if r.returncode != 0:
+            ok, msg = False, f"解释器跑不起来：{(r.stderr or '').strip()[:120]}"
+        else:
+            missing = [m for m in (r.stdout or "").strip().split(",") if m]
+            ok = not missing
+            msg = "" if ok else "缺少 " + "、".join(missing)
     except Exception as e:
         ok, msg = False, f"解释器不可用：{e}"
     _deps_cache[py] = (ok, msg)
@@ -485,15 +502,22 @@ def run_order_monitor():
     py = _order_monitor_python()
     deps_ok, deps_msg = _check_order_monitor_deps(py)
     if not deps_ok:
+        pkgs = " ".join(_OM_DEPS)
         abort(400, description=(
-            f"{py} {deps_msg}。出单监控脚本需要 pandas 和 openpyxl —— "
-            f"把它们装进这个解释器（pip install pandas openpyxl），"
-            f"或在 config.json 的 order_monitor.python 里指向一个已经有的解释器。"))
+            f"{py} {deps_msg}。装进这个解释器："
+            f'"{py}" -m pip install {pkgs} '
+            f"—— 或在 config.json 的 order_monitor.python 里指向一个已经装好的解释器。"))
 
-    # 存到临时目录，不再往脚本目录里扔 _wb_today_*.xlsx（那些文件从来没人清理）
+    # 存到临时目录，不再往脚本目录里扔 _wb_today_*.xlsx（那些文件从来没人清理）。
+    # 保留原始扩展名：pandas 虽然是按内容魔数认格式的（所以 .xls 存成 .xlsx 也能读），
+    # 但别留这种自相矛盾的文件名，出问题时会误导排查。
+    def _ext(fs, default=".xlsx"):
+        e = Path(fs.filename or "").suffix.lower()
+        return e if e in (".xls", ".xlsx", ".xlsm") else default
+
     tmp = Path(tempfile.mkdtemp(prefix="wb_order_"))
-    today_path = tmp / "today.xlsx"
-    yesterday_path = tmp / "yesterday.xlsx"
+    today_path = tmp / ("today" + _ext(today))
+    yesterday_path = tmp / ("yesterday" + _ext(yesterday))
     today.save(str(today_path))
     yesterday.save(str(yesterday_path))
 

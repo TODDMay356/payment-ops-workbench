@@ -166,7 +166,12 @@ A: 展开状态栏看「续期线程」那一格：显示"已停止"就重启工
 多半是 AppID/AppSecret 不对或网络不通。
 
 **Q: 出单监控点了没反应 / 报错？**
-A: 日志直接显示在页面里。如果状态栏显示"出单监控脚本未找到"，改 `config.json` 的 `order_monitor.dir`。
+A: 日志直接显示在页面里。状态栏会分两种情况说清楚：
+- **"脚本未找到"** → 改 `config.json` 的 `order_monitor.dir`
+- **"缺少 xxx"** → 那个解释器少包，按提示里的 pip 命令装。
+  三个都要有：`pandas`（分析）、`openpyxl`（读 .xlsx）、`xlrd`（读 .xls）。
+  报表两种格式都出现过 —— pandas 是按**文件内容的魔数**认格式的，不是看扩展名，
+  所以一份名字叫 .xlsx 的老格式文件照样会去找 xlrd。
 
 **Q: 想加第三个工具？**
 A: HTML 丢进 `static/`，`app.py` 加一条路由，首页复制一个 `<section class="act">` 改掉。

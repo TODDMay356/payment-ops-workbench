@@ -1,2 +1,10 @@
 flask>=3.0
 requests>=2.31
+
+# 出单监控脚本用的。工作台默认用自己的 venv 跑那些脚本（sys.executable），
+# 所以装在这里；config.json 的 order_monitor.python 指向别的解释器时，
+# 要保证那个解释器里也有这三个。
+# openpyxl 只读 .xlsx，xlrd 只读 .xls —— 报表两种格式都出现过，两个都要装。
+pandas>=2.0
+openpyxl>=3.1
+xlrd>=2.0.1
