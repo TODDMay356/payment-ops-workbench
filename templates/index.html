@@ -175,6 +175,16 @@
   .tag.on{background:var(--ok-wash); color:var(--ok)}
   .tag.off{background:var(--warn-wash); color:var(--warn)}
 
+  /* 邮箱自动化：标题行右侧的一条，以及卡片里的状态条 */
+  .inbox-bar{margin-left:auto; display:flex; align-items:center; gap:8px;
+             font-size:11.5px; color:var(--ink-3)}
+  .inbox-bar .btn{padding:3px 0; font-size:11.5px}
+  .note{font-size:12.5px; padding:9px 11px; border-radius:var(--r-s);
+        background:var(--surface-2); color:var(--ink-2); line-height:1.55}
+  .note.ok{background:var(--ok-wash); color:var(--ok)}
+  .note.warn{background:var(--warn-wash); color:var(--warn)}
+  .note b{font-variant-numeric:tabular-nums}
+
   /* 表单 */
   .fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:10px}
   .f{display:flex; flex-direction:column; gap:4px; min-width:0}
@@ -302,7 +312,13 @@
         </div>
       </section>
 
-      <div class="sec"><h2>今天要做的</h2><span class="rule"></span></div>
+      <div class="sec">
+        <h2>今天要做的</h2><span class="rule"></span>
+        <span class="inbox-bar" id="inboxBar" hidden>
+          <span id="inboxText">—</span>
+          <button type="button" class="btn quiet" id="inboxFetch">立即收取</button>
+        </span>
+      </div>
 
       <!-- ① 转化率 -->
       <section class="act">
@@ -310,15 +326,15 @@
           <div class="ico" aria-hidden="true">◲</div>
           <div class="t">
             <h3>每日转化率巡检</h3>
-            <p>传昨天的 Excel，解析完自动写多维表格 + 推异常到飞书群。</p>
+            <p>解析昨天的 Excel，看异常明细和播报素材。发飞书 / 写多维表格都在页面里点按钮。</p>
           </div>
         </div>
         <div class="act-body">
           <div class="tags">
             <span class="tag on">凭据由工作台托管</span>
-            <span class="tag on">解析后自动同步</span>
+            <span class="tag" id="convInboxTag" hidden>邮箱自动获取</span>
           </div>
-          <div class="row">
+          <div class="row" id="convRow">
             <button type="button" class="btn primary" data-open-tool="conversion">打开并上传 Excel</button>
             <span style="font-size:12px;color:var(--ink-3)">打开即可用，不需要再填 Webhook 或 token。</span>
           </div>
@@ -331,7 +347,7 @@
           <div class="ico amber" aria-hidden="true">◪</div>
           <div class="t">
             <h3>出单耗时监控</h3>
-            <p>选今天和昨天两份报表，对比分类后自动发群通知和 BD 私聊。</p>
+            <p>对比今天和昨天两份报表，分类后发群通知和 BD 私聊。取到邮件会自动跑，不用手动触发。</p>
           </div>
         </div>
         <div class="act-body">
@@ -339,6 +355,7 @@
             <span class="tag on" id="omModeTag">群通知 + BD 私聊</span>
             <span class="tag" id="omPathTag">检查脚本位置…</span>
           </div>
+          <div class="note" id="omInboxNote" hidden></div>
           <form id="omForm" enctype="multipart/form-data">
             <div class="fields">
               <label class="f"><span>今天的报表</span>
@@ -435,11 +452,12 @@ $('#addr').textContent = API;
 /* ---------- 导航 ---------- */
 const TOOLS={conversion:'每日转化率数据监控', merchant:'商户转化率 & 成功率分析'};
 
-function openTool(name){
+function openTool(name, query){
   $('#homeView').hidden = true;
   $('#toolView').hidden = false;
   $('#toolTitle').textContent = TOOLS[name] || name;
-  $('#toolFrame').src = '/' + name;
+  // query 用来把「加载哪天的邮箱存档」告诉工具页，见 conversion.html 的 inboxAutoLoad
+  $('#toolFrame').src = '/' + name + (query || '');
   $$('.rail button[data-nav]').forEach(b=>b.setAttribute('aria-current', String(b.dataset.nav===name)));
 }
 function goHome(){
@@ -447,7 +465,7 @@ function goHome(){
   $('#toolFrame').src = 'about:blank';
   $('#homeView').hidden = false;
   $$('.rail button[data-nav]').forEach(b=>b.setAttribute('aria-current', String(b.dataset.nav==='home')));
-  refreshActivity();
+  refreshActivity(); refreshInbox();
 }
 $$('.rail button[data-nav]').forEach(b=>{
   b.addEventListener('click',()=> b.dataset.nav==='home' ? goHome() : openTool(b.dataset.nav));
@@ -555,8 +573,103 @@ async function refreshStatus(){
   }
 }
 
+/* ---------- 邮箱自动化 ----------
+   报表每天由邮件发来。工作台自己取附件、按业务日期存档：
+     出单监控  取到就直接跑完（群通知 + BD 私聊），这里只汇报结果
+     转化率    只存档，出一张待办卡片 —— 点了才打开分析页
+   两者都不会自动往飞书推转化率的播报，那仍然是工具页里点按钮的事。 */
+let inboxTimer=null;
+
+function fmtClock(ts){
+  const d=new Date(ts*1000);
+  return pad(d.getHours())+':'+pad(d.getMinutes());
+}
+
+async function refreshInbox(){
+  let info;
+  try{ info=await (await fetch('/api/inbox/latest',{cache:'no-store'})).json(); }catch(e){ return; }
+
+  const bar=$('#inboxBar');
+  if(!info.enabled){
+    bar.hidden=true;
+    // 没开邮箱自动化不是错，卡片保持原来的手动形态即可
+    $('#convInboxTag').hidden=true;
+    $('#omInboxNote').hidden=true;
+    return;
+  }
+  bar.hidden=false;
+  const lf=info.last_fetch;
+  $('#inboxText').textContent = lf
+    ? `上次收取 ${fmtClock(lf.ts)}${lf.saved?` · 取到 ${lf.saved} 份`:' · 无新报表'}`
+    : '还没收取过';
+
+  /* 转化率：待办卡片 */
+  const c=info.conversion;
+  const row=$('#convRow'), tag=$('#convInboxTag');
+  if(c && !c.analyzed){
+    tag.hidden=false; tag.className='tag on'; tag.textContent=`已取到 ${c.date}`;
+    row.replaceChildren();
+    const b=document.createElement('button');
+    b.type='button'; b.className='btn primary';
+    b.textContent=`📥 打开并分析 ${c.date} 的报表`;
+    b.addEventListener('click',()=>openTool('conversion','?inbox='+encodeURIComponent(c.date)));
+    const s=document.createElement('span');
+    s.style.cssText='font-size:12px;color:var(--ink-3)';
+    s.textContent='不用再选文件；发飞书仍然是页面里点按钮。';
+    row.append(b,s);
+  }else{
+    tag.hidden = !c;
+    if(c){ tag.className='tag'; tag.textContent=`${c.date} 已分析`; }
+    if(!row.querySelector('[data-open-tool]')){
+      row.replaceChildren();
+      const b=document.createElement('button');
+      b.type='button'; b.className='btn primary';
+      b.dataset.openTool='conversion'; b.textContent='打开并上传 Excel';
+      b.addEventListener('click',()=>openTool('conversion'));
+      const s=document.createElement('span');
+      s.style.cssText='font-size:12px;color:var(--ink-3)';
+      s.textContent='打开即可用，不需要再填 Webhook 或 token。';
+      row.append(b,s);
+    }
+  }
+
+  /* 出单监控：自动跑的结果 */
+  const o=info.order_monitor, note=$('#omInboxNote');
+  if(!o){
+    note.hidden=true;
+  }else if(o.run && o.run.ok){
+    // 跑成功要排在 ready 判断前面：跑完之后 D-1 那份可能已经被保留期清掉了，
+    // 那时 ready 会变 false，但事情早就办完了，不该再报警
+    note.hidden=false; note.className='note ok';
+    note.innerHTML=`✅ <b>${o.date}</b> 已自动跑完（${esc(o.run.detail||'群通知 + BD 私聊')}），不需要再手动传。`;
+  }else if(!o.ready){
+    // 脚本要两天快照做对比，缺一天是真跑不了 —— 说清楚缺哪天，别让人以为坏了
+    note.hidden=false; note.className='note warn';
+    note.innerHTML=`已取到 <b>${o.date}</b> 的报表，但${esc(o.reason)}。下面手动传两份也可以。`;
+  }else if(o.run){
+    note.hidden=false; note.className='note warn';
+    note.innerHTML=`<b>${o.date}</b> 自动运行失败：${esc(o.run.detail||'')}。可以在下面手动重跑。`;
+  }else{
+    note.hidden=false; note.className='note';
+    note.innerHTML=`已取到 <b>${o.date}</b> 和 <b>${o.prev_date}</b> 两份报表，等待自动运行。`;
+  }
+}
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+$('#inboxFetch').addEventListener('click', async ()=>{
+  const btn=$('#inboxFetch'), txt=$('#inboxText');
+  btn.disabled=true; txt.textContent='正在收取…';
+  try{
+    const r=await (await fetch('/api/inbox/fetch',{method:'POST'})).json();
+    if(!r.ok) txt.textContent='收取失败：'+(r.msg||'');
+  }catch(e){ txt.textContent='收取失败：'+e.message; }
+  btn.disabled=false;
+  refreshInbox(); refreshActivity();
+});
+
 /* ---------- 今日结果 ---------- */
-const KIND={webhook:'飞书推送', bitable:'多维表格', 'order-monitor':'出单监控'};
+const KIND={webhook:'飞书推送', bitable:'多维表格', 'order-monitor':'出单监控', inbox:'邮箱收取'};
 async function refreshActivity(){
   let items=[];
   try{ items=(await (await fetch('/api/activity',{cache:'no-store'})).json()).items||[]; }catch(e){ return; }
@@ -597,7 +710,7 @@ function omFinish(cls, text){
   $('#omState').textContent=text;
   $('#omRun').disabled=false;
   $('#omRun').textContent='开始运行';
-  refreshActivity();
+  refreshActivity(); refreshInbox();
 }
 
 function omStream(jobId){
@@ -650,8 +763,9 @@ $('#omForm').addEventListener('submit', async ev=>{
 /* ---------- 启动 ---------- */
 refreshStatus();
 refreshActivity();
+refreshInbox();
 setInterval(refreshStatus, 60000);
-setInterval(()=>{ if(!$('#homeView').hidden) refreshActivity(); }, 20000);
+setInterval(()=>{ if(!$('#homeView').hidden){ refreshActivity(); refreshInbox(); } }, 20000);
 </script>
 </body>
 </html>

@@ -8,3 +8,8 @@ requests>=2.31
 pandas>=2.0
 openpyxl>=3.1
 xlrd>=2.0.1
+
+# 邮箱自动化：读本机 Outlook 经典桌面版（COM）。只有 Windows 需要，
+# 别的平台 pip 会直接跳过这一行，不影响安装。
+# 没装也不会让工作台起不来 —— provider=outlook 时才 import，缺了会给一句人话。
+pywin32>=306; sys_platform == "win32"

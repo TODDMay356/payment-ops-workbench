@@ -1,0 +1,55 @@
+{
+  "_comment": "邮箱自动化配置。复制成 mailbox.json 再填（mailbox.json 已在 .gitignore 里）。单独一个文件，不和 config.json 混。填完重启工作台。",
+
+  "enabled": true,
+
+  "_comment_provider": "outlook = 读本机 Outlook 经典桌面版（走 COM，不存密码、不用授权码）。folder = 扫一个本地目录，把文件名当邮件主题用 —— 用于在没有 Outlook 的机器上验证整条链路，或者 COM 走不通时手动把附件另存到一个目录做兜底。",
+  "provider": "outlook",
+
+  "_comment_outlook": "folder 是邮件所在的文件夹路径，层级用 / 分隔，例如 收件箱/报表；留空 = 默认收件箱。不知道该填什么就先访问 http://127.0.0.1:5050/api/inbox/probe ，它会列出完整文件夹树和每个文件夹近期匹配到几封信。lookback_days 要 >= 2：出单监控需要昨天那份报表才能做对比。",
+  "outlook": {
+    "folder": "",
+    "lookback_days": 10,
+    "max_scan": 300
+  },
+
+  "folder": {
+    "dir": ""
+  },
+
+  "_comment_senders": "发件人白名单，子串匹配，留空 = 只按主题判。Exchange 内部发件人可能给出 X.500 地址而不是邮箱，所以匹配是宽松的。",
+  "senders": ["data@inflyway.com"],
+
+  "_comment_rules": "怎么从主题认出这是哪份报表、是哪天的数据。主题里的日期就是业务日期。两份报表的日期格式不一样：转化率无横线（20260802），出单监控有横线（2026-08-02）。attachment_regex 可选，用来在多附件邮件里挑出正确的那个。",
+  "rules": [
+    {
+      "kind": "conversion",
+      "subject_contains": "支付转化率统计表",
+      "date_regex": "(\\d{8})",
+      "date_format": "%Y%m%d",
+      "attachment_regex": "\\.xlsx?$"
+    },
+    {
+      "kind": "order_monitor",
+      "subject_contains": "新商户审核耗时报表",
+      "date_regex": "(\\d{4}-\\d{2}-\\d{2})",
+      "date_format": "%Y-%m-%d",
+      "attachment_regex": "\\.xlsx?$"
+    }
+  ],
+
+  "_comment_schedule": "on_start = 工作台一启动就收一次（覆盖『开机后』这个场景）；at 是每天再收一次的时间点，24 小时制本地时间。报表周末也发，所以不区分工作日。",
+  "schedule": {
+    "at": "10:00",
+    "on_start": true
+  },
+
+  "_comment_order_monitor": "auto_run = 取到报表后直接跑完（群通知 + BD 私聊都发，不需要人点）。跑之前需要同时有 D 和 D-1 两天的报表 —— 脚本是拿两天快照做对比的。password 是出单监控.py 里的那个 PASSWORD，本来就明文硬编码在脚本里。",
+  "order_monitor": {
+    "auto_run": true,
+    "password": ""
+  },
+
+  "_comment_retention": "存档保留天数。附件落在 data/inbox/<kind>/<业务日期>.xlsx。",
+  "retention_days": 30
+}

@@ -2062,12 +2062,12 @@ $('#periodSeg').addEventListener('click', e=>{
   }
 });
 
-$('#file').addEventListener('change', async e=>{
-  const f=e.target.files[0]; if(!f) return;
+/* 解析入口。两条路进来：人工选文件，和工作台从邮箱取回来的存档（见文件末尾的 inbox 段）。
+   抽成函数是为了后者不必伪造一个 change 事件。 */
+async function loadWorkbook(buf, name){
   const msg=$('#loadMsg');
   msg.innerHTML='<span class="hint">正在解析…</span>';
   try{
-    const buf=await f.arrayBuffer();
     const wb=XLSX.read(buf,{cellDates:true});
     const need=['场景维度','场景×商户维度'];
     const miss=need.filter(s=>!wb.SheetNames.includes(s));
@@ -2083,12 +2083,19 @@ $('#file').addEventListener('change', async e=>{
     run();
     $('#app').hidden=false; $('#foot').hidden=false;
     unlockTabs(); showPanel('overview');
-    msg.innerHTML=`<div class="banner ok" style="margin-top:10px">✅ 已解析：${esc(f.name)} · 当前 <b>${PERIOD}</b>，本期 ${state.data.tDate}（对比 ${state.data.yDate}）</div>`;
+    msg.innerHTML=`<div class="banner ok" style="margin-top:10px">✅ 已解析：${esc(name)} · 当前 <b>${PERIOD}</b>，本期 ${state.data.tDate}（对比 ${state.data.yDate}）</div>`;
+    return true;
   }catch(err){
     console.error(err);
     msg.innerHTML=`<div class="banner warn" style="margin-top:10px">解析失败：${esc(err.message||String(err))}</div>`;
     $('#app').hidden=true;
+    return false;
   }
+}
+
+$('#file').addEventListener('change', async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  await loadWorkbook(await f.arrayBuffer(), f.name);
 });
 
 $('#recalc').addEventListener('click', ()=>{
@@ -2627,4 +2634,57 @@ function confirmResend(kind, label){
   if(!key || !sent[kind].has(key)) return true;
   return confirm(`本期（${key}）本次会话已经${label}过一次了，确定再来一次吗？`);
 }
+
+/* ============================================================
+   13. 从工作台的邮箱存档直接加载
+
+   报表每天由邮件发来，工作台已经按业务日期存好了。这里省掉「下载附件 → 选文件」
+   那两步：带 ?inbox=<日期> 进来（首页待办卡片就是这么跳的）就直接解析；
+   直接打开本页则只提示一句，点了才加载 —— 不替用户做决定。
+
+   注意这里**不碰任何飞书推送**：解析完是否发群、是否写多维表格，仍然只有点按钮才发。
+   ============================================================ */
+(async function inboxAutoLoad(){
+  const want=new URLSearchParams(location.search).get('inbox');
+  let info;
+  try{
+    const r=await fetch('/api/inbox/latest',{cache:'no-store'});
+    if(!r.ok) return;                       // 不是工作台在服务本页，或功能没开
+    info=await r.json();
+  }catch(e){ return; }
+  const c=info && info.conversion;
+  if(!c || !c.url) return;
+
+  const load=async ()=>{
+    const msg=$('#loadMsg');
+    msg.innerHTML='<span class="hint">正在从邮箱存档加载…</span>';
+    let buf;
+    try{
+      const r=await fetch(c.url,{cache:'no-store'});
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
+      buf=await r.arrayBuffer();
+    }catch(e){
+      msg.innerHTML=`<div class="banner warn" style="margin-top:10px">邮箱存档加载失败：${esc(e.message||String(e))}。请手动选择文件。</div>`;
+      return;
+    }
+    if(await loadWorkbook(buf, `${c.date} 报表（邮箱自动获取）`)){
+      // 回报一声，首页那张待办卡片就消掉了
+      fetch('/api/inbox/analyzed',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({kind:'conversion',date:c.date})}).catch(()=>{});
+    }
+  };
+
+  if(want && want===c.date){ await load(); return; }
+
+  const box=document.createElement('div');
+  box.className='banner ok';
+  box.style.margin='0 0 12px';
+  box.innerHTML=`📥 工作台已从邮箱取到 <b>${esc(c.date)}</b> 的报表${c.analyzed?'（本机已分析过）':''}　`;
+  const btn=document.createElement('button');
+  btn.type='button'; btn.className='btn'; btn.textContent='直接加载';
+  btn.addEventListener('click',()=>{ box.remove(); load(); });
+  box.appendChild(btn);
+  const anchor=$('#loadMsg');
+  if(anchor && anchor.parentNode) anchor.parentNode.insertBefore(box, anchor);
+})();
 </script>

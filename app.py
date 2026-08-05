@@ -15,6 +15,10 @@ app.py - 工作台 Flask 主程序
   POST /api/feishu/bitable        写入多维表格（自动加 Bearer token）
   POST /api/feishu/notify-me      (可选) App 身份发 DM
   POST /api/run/order-monitor     跑出单监控，返回 job_id
+  GET  /api/inbox/latest          邮箱取到的报表现状（首页待办卡片）
+  POST /api/inbox/fetch           立即收取一次
+  GET  /api/inbox/probe           诊断：邮箱文件夹树 + 匹配数
+  GET  /api/inbox/file/<k>/<日期>  把存档报表发给工具页
   GET  /api/jobs/<id>             任务快照（断线重连用）
   GET  /api/jobs/<id>/stream      任务日志 SSE 实时流
 """
@@ -23,6 +27,7 @@ import sys
 import json
 import time
 import logging
+import re
 import subprocess
 import tempfile
 import threading
@@ -37,8 +42,10 @@ from werkzeug.exceptions import HTTPException
 
 import requests
 
+import automation
 import feishu
 import jobs
+import mailbox
 
 
 HERE = Path(__file__).resolve().parent
@@ -111,7 +118,7 @@ def _record(kind: str, ok: bool, detail: str):
     with _activity_lock:
         _activity.appendleft({
             "ts": time.time(),
-            "kind": kind,      # webhook | bitable | order-monitor
+            "kind": kind,      # webhook | bitable | order-monitor | inbox
             "ok": bool(ok),
             "detail": detail,
         })
@@ -190,6 +197,10 @@ def status():
     except Exception as e:
         return jsonify({"config_loaded": True, "error": str(e)})
     s["order_monitor"] = _order_monitor_status()
+    try:
+        s["mailbox"] = automation.get().status()
+    except Exception as e:
+        s["mailbox"] = {"enabled": False, "reason": str(e)}
     return jsonify({"config_loaded": True, "summary": s})
 
 
@@ -472,6 +483,68 @@ def _check_order_monitor_deps(py: str) -> tuple[bool, str]:
     return ok, msg
 
 
+def _launch_order_monitor(today_path: str, yesterday_path: str,
+                          password: str, report_date: str, source: str = "manual") -> dict:
+    """
+    拼 argv 起任务。手动上传（路由）和邮箱自动化（automation）共用这一条路径，
+    保证两边的依赖检查、AppSecret 下发、流水记录完全一致。
+
+    参数不合法时抛 ValueError，由调用方决定是转成 400 还是写进流水。
+    """
+    om_dir, wrapper = _order_monitor_paths()
+    if not wrapper.exists():
+        raise ValueError(f"找不到出单监控脚本：{wrapper}。请在 config.json 的 order_monitor.dir 里指向正确目录。")
+
+    py = _order_monitor_python()
+    deps_ok, deps_msg = _check_order_monitor_deps(py)
+    if not deps_ok:
+        pkgs = " ".join(_OM_DEPS)
+        raise ValueError(
+            f"{py} {deps_msg}。装进这个解释器："
+            f'"{py}" -m pip install {pkgs} '
+            f"—— 或在 config.json 的 order_monitor.python 里指向一个已经装好的解释器。")
+
+    mode = (config.get("order_monitor") or {}).get("mode") or "both"
+    # AppSecret 经环境变量下发，脚本里就不用再硬编码一份。
+    # 走 env 而不是命令行参数：命令行在任务管理器里是明文可见的。
+    app_secret = (config.get("feishu") or {}).get("app_secret") or ""
+
+    label = {"both": "群通知 + BD 私聊", "group": "仅群通知", "dm": "仅 BD 私聊"}.get(mode, mode)
+    prefix = "自动 · " if source == "auto" else ""
+
+    def _done(job):
+        """出单监控脚本直连飞书，不走中转路由，所以流水得在这里补记。"""
+        ok = job.returncode == 0
+        if ok:
+            detail = f"{prefix}{report_date} · {label} 已完成"
+        else:
+            tail = next((l for l in reversed(job.lines) if l.strip()), "")
+            detail = (f"{prefix}{report_date} · 失败（退出码 {job.returncode}）"
+                      f"{('：' + tail[:120]) if tail else ''}")
+        _record("order-monitor", ok, detail)
+        if source == "auto":
+            # 只有自动跑的才记进 state —— 手动重跑不该被"今天已经跑过了"挡住
+            try:
+                mailbox.mark_run(report_date, ok, detail, job_id=job.id)
+            except Exception:
+                pass
+
+    job_id = jobs.start_job(
+        "order-monitor",
+        [_order_monitor_python(), str(wrapper),
+         "--today", str(today_path),
+         "--yesterday", str(yesterday_path),
+         "--password", password,
+         "--date", report_date,
+         "--mode", mode],
+        cwd=str(om_dir),
+        env_extra={"WB_FEISHU_APP_SECRET": app_secret} if app_secret else None,
+        on_done=_done,
+    )
+    log.info(f"出单监控任务已启动 job={job_id} date={report_date} mode={mode} source={source}")
+    return {"ok": True, "job_id": job_id, "mode": mode}
+
+
 @app.route("/api/run/order-monitor", methods=["POST"])
 def run_order_monitor():
     """
@@ -495,19 +568,6 @@ def run_order_monitor():
     if not report_date:
         abort(400, description="请选择报表业务日期")
 
-    om_dir, wrapper = _order_monitor_paths()
-    if not wrapper.exists():
-        abort(400, description=f"找不到出单监控脚本：{wrapper}。请在 config.json 的 order_monitor.dir 里指向正确目录。")
-
-    py = _order_monitor_python()
-    deps_ok, deps_msg = _check_order_monitor_deps(py)
-    if not deps_ok:
-        pkgs = " ".join(_OM_DEPS)
-        abort(400, description=(
-            f"{py} {deps_msg}。装进这个解释器："
-            f'"{py}" -m pip install {pkgs} '
-            f"—— 或在 config.json 的 order_monitor.python 里指向一个已经装好的解释器。"))
-
     # 存到临时目录，不再往脚本目录里扔 _wb_today_*.xlsx（那些文件从来没人清理）。
     # 保留原始扩展名：pandas 虽然是按内容魔数认格式的（所以 .xls 存成 .xlsx 也能读），
     # 但别留这种自相矛盾的文件名，出问题时会误导排查。
@@ -521,36 +581,74 @@ def run_order_monitor():
     today.save(str(today_path))
     yesterday.save(str(yesterday_path))
 
-    mode = (config.get("order_monitor") or {}).get("mode") or "both"
-    # AppSecret 经环境变量下发，脚本里就不用再硬编码一份。
-    # 走 env 而不是命令行参数：命令行在任务管理器里是明文可见的。
-    app_secret = (config.get("feishu") or {}).get("app_secret") or ""
+    try:
+        r = _launch_order_monitor(str(today_path), str(yesterday_path), password, report_date)
+    except ValueError as e:
+        abort(400, description=str(e))
+    return jsonify(r)
 
-    label = {"both": "群通知 + BD 私聊", "group": "仅群通知", "dm": "仅 BD 私聊"}.get(mode, mode)
 
-    def _done(job):
-        """出单监控脚本直连飞书，不走中转路由，所以流水得在这里补记。"""
-        if job.returncode == 0:
-            _record("order-monitor", True, f"{report_date} · {label} 已完成")
-        else:
-            tail = next((l for l in reversed(job.lines) if l.strip()), "")
-            _record("order-monitor", False,
-                    f"{report_date} · 失败（退出码 {job.returncode}）{('：' + tail[:120]) if tail else ''}")
+# ---------- 邮箱自动化 ----------
 
-    job_id = jobs.start_job(
-        "order-monitor",
-        [sys.executable, str(wrapper),
-         "--today", str(today_path),
-         "--yesterday", str(yesterday_path),
-         "--password", password,
-         "--date", report_date,
-         "--mode", mode],
-        cwd=str(om_dir),
-        env_extra={"WB_FEISHU_APP_SECRET": app_secret} if app_secret else None,
-        on_done=_done,
-    )
-    log.info(f"出单监控任务已启动 job={job_id} date={report_date} mode={mode}")
-    return jsonify({"ok": True, "job_id": job_id, "mode": mode})
+@app.route("/api/inbox/latest")
+def inbox_latest():
+    """首页待办卡片 + 转化率页自动加载都读这个。"""
+    try:
+        return jsonify(mailbox.latest(mailbox.load_config()))
+    except mailbox.MailboxError as e:
+        return jsonify({"ok": False, "enabled": False, "msg": str(e)})
+
+
+@app.route("/api/inbox/fetch", methods=["POST"])
+def inbox_fetch():
+    """手动「立即收取」。和定时走同一条路径，包括自动跑出单监控。"""
+    try:
+        r = automation.get().run_once("手动")
+    except RuntimeError:
+        abort(503, description="邮箱自动化未初始化")
+    if not r.get("ok"):
+        return jsonify({"ok": False, "msg": r.get("msg") or "收取失败"}), 400
+    return jsonify(r)
+
+
+@app.route("/api/inbox/probe")
+def inbox_probe():
+    """
+    诊断：列出邮箱里的文件夹树，以及每个文件夹近期能匹配上几封报表邮件。
+    Windows 上第一次配置时先跑这个，再决定 outlook.folder 填什么。只读，不存档。
+    """
+    try:
+        return jsonify(mailbox.probe(mailbox.load_config()))
+    except mailbox.MailboxError as e:
+        abort(400, description=str(e))
+    except Exception as e:
+        abort(500, description=f"探测失败：{e}")
+
+
+@app.route("/api/inbox/file/<kind>/<date>")
+def inbox_file(kind, date):
+    """把存档的报表发给转化率页，让它不用人选文件就能解析。"""
+    if kind not in mailbox.KIND_LABEL:
+        abort(404, description=f"未知的报表类型：{kind}")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date or ""):
+        abort(400, description="日期格式应为 YYYY-MM-DD")
+    p = mailbox.find_archived(kind, date)
+    if not p:
+        abort(404, description=f"存档里没有 {mailbox.KIND_LABEL[kind]} {date} 的报表")
+    return send_from_directory(p.parent, p.name, as_attachment=False,
+                               download_name=f"{mailbox.KIND_LABEL[kind]}_{date}{p.suffix}")
+
+
+@app.route("/api/inbox/analyzed", methods=["POST"])
+def inbox_analyzed():
+    """转化率页解析成功后回报，首页那张待办卡片据此消掉。"""
+    body = request.get_json(silent=True) or {}
+    kind = body.get("kind") or "conversion"
+    date = body.get("date") or ""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        abort(400, description="缺少合法的 date（YYYY-MM-DD）")
+    mailbox.mark_analyzed(kind, date)
+    return jsonify({"ok": True})
 
 
 # ---------- 任务日志 ----------
@@ -591,6 +689,12 @@ def job_stream(job_id):
     )
 
 
+# ---------- 邮箱自动化：起定时线程 ----------
+# 放在这里而不是文件开头：init() 会立刻拉起后台线程，而线程要回调 _launch_order_monitor，
+# 那个函数得先定义完。和 feishu.init 一样放模块级，用 waitress / flask run 启动时也生效。
+automation.init(launcher=_launch_order_monitor, recorder=_record, logger=log.info)
+
+
 # ---------- 启动 ----------
 
 def main():
@@ -605,10 +709,11 @@ def main():
     try:
         app.run(host=HOST, port=PORT, debug=DEBUG, use_reloader=False, threaded=True)
     finally:
-        try:
-            feishu.get().stop()
-        except Exception:
-            pass
+        for stopper in (lambda: feishu.get().stop(), automation.stop):
+            try:
+                stopper()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
