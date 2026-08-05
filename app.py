@@ -92,6 +92,11 @@ log = logging.getLogger("workbench")
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
+# 中文不要转义成 \uXXXX。默认行为下，任何带中文的接口在浏览器里都是
+# {"name":"存档"} 这种样子 —— 排查问题时人根本读不了，
+# 而这些接口（尤其 /api/inbox/probe）本来就是给人打开看的。
+app.json.ensure_ascii = False
+
 # 在模块级初始化飞书客户端（含后台续期线程）。
 # 原来只在 main() 里 init，用 flask run / waitress 之类的方式启动时就不会执行，
 # 于是所有飞书接口静默 503。
@@ -614,18 +619,105 @@ def inbox_fetch():
     return jsonify(r)
 
 
+def _probe_html(r: dict) -> str:
+    """
+    把 probe 结果渲染成一张能直接读的表。
+
+    这个接口是给人用浏览器打开的 —— 让人在一大坨 JSON 里找 matched 大于 0 的那一行，
+    等于没给答案。这里直接把结论写在最上面：该填哪个路径，或者为什么一封都没匹配到。
+    """
+    rows = sorted(r.get("folders") or [],
+                  key=lambda f: (-(f.get("matched") or 0), -(f.get("recent") or 0)))
+    hit = [f for f in rows if (f.get("matched") or 0) > 0]
+    any_mail = any((f.get("recent") or 0) > 0 for f in rows)
+
+    if hit:
+        best = hit[0]
+        head = (f'<p class=ok><b>找到了。</b>把下面这个路径原样填进 <code>mailbox.json</code> 的 '
+                f'<code>outlook.folder</code>：</p>'
+                f'<p class=path>{esc_html(best["path"])}</p>'
+                f'<p class=hint>近 {r.get("lookback_days")} 天里匹配到 {best["matched"]} 封报表邮件。'
+                f'{"另有 %d 个文件夹也有匹配，见下表。" % (len(hit) - 1) if len(hit) > 1 else ""}</p>')
+    elif not any_mail:
+        head = ('<p class=bad><b>一封都没扫到。</b></p><p class=hint>所有文件夹近 '
+                f'{r.get("lookback_days")} 天都是 0 封邮件，说明不是主题规则的问题。'
+                '多半是：邮件在另一个邮箱账户下（下表只列出了 Outlook 里已加载的账户），'
+                f'或者报表比 {r.get("lookback_days")} 天还旧 —— 可以把 '
+                '<code>outlook.lookback_days</code> 调大再试。</p>')
+    else:
+        head = ('<p class=bad><b>有邮件，但一封都没匹配上。</b></p><p class=hint>'
+                '说明文件夹能扫到，是<b>主题关键词对不上</b>。'
+                '当前规则找的是主题里含「支付转化率统计表」或「新商户审核耗时报表」的邮件。'
+                '把那两封邮件的<b>完整主题</b>抄下来，对照着改 <code>mailbox.json</code> 的 '
+                '<code>rules</code>；日期那段要能被 <code>date_regex</code> 抠出来。</p>')
+
+    trs = "".join(
+        f'<tr class="{"hit" if (f.get("matched") or 0) > 0 else ""}">'
+        f'<td>{esc_html(f["path"])}</td>'
+        f'<td class=n>{f.get("recent") or 0}</td>'
+        f'<td class=n>{f.get("matched") or 0}</td></tr>'
+        for f in rows)
+
+    return f"""<!doctype html><html lang=zh-CN><head><meta charset=utf-8>
+<title>邮箱文件夹探测</title><style>
+body{{font:14px/1.65 "PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+     max-width:820px;margin:36px auto;padding:0 20px;color:#12161f;background:#fafbfd}}
+h1{{font-size:18px;margin-bottom:4px}}
+.sub{{color:#7a8699;font-size:12.5px;margin-bottom:18px}}
+p{{margin:10px 0}} .hint{{color:#455065;font-size:13px}}
+.ok{{color:#0f9d63}} .bad{{color:#b7791f}}
+.path{{font:600 15px ui-monospace,Consolas,monospace;background:#e6f5ee;color:#0b6b45;
+      padding:10px 13px;border-radius:6px;user-select:all;word-break:break-all}}
+code{{background:#f4f6fa;padding:1px 5px;border-radius:4px;font-size:12.5px}}
+table{{border-collapse:collapse;width:100%;margin-top:18px;background:#fff;
+      border:1px solid #e3e8f0;border-radius:8px;overflow:hidden}}
+th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #eef1f6;font-size:13px}}
+th{{background:#f4f6fa;font-size:11px;letter-spacing:.05em;color:#7a8699}}
+td.n{{font:13px ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums;
+     text-align:right;width:110px}}
+tr.hit td{{background:#e6f5ee;font-weight:600}}
+tr:last-child td{{border-bottom:0}}
+@media(prefers-color-scheme:dark){{
+  body{{background:#0e1218;color:#e8ecf3}} .hint{{color:#a3aec1}}
+  table{{background:#161b24;border-color:#272f3d}} th{{background:#1d232e;color:#727e93}}
+  th,td{{border-color:#222a36}} code{{background:#1d232e}}
+  .path{{background:#12281f;color:#3fbc86}} tr.hit td{{background:#12281f}}
+}}
+</style></head><body>
+<h1>邮箱文件夹探测</h1>
+<div class=sub>只读操作，不下载任何附件，可以反复刷新。
+共 {len(rows)} 个文件夹 · 回看 {r.get("lookback_days")} 天 · 默认收件箱叫「{esc_html(r.get("inbox_name") or "?")}」</div>
+{head}
+<table><tr><th>文件夹路径</th><th class=n>近期邮件</th><th class=n>匹配到报表</th></tr>{trs}</table>
+<p class=hint style="margin-top:16px">想看原始 JSON：在地址后面加 <code>?format=json</code></p>
+</body></html>"""
+
+
+def esc_html(s) -> str:
+    return (str(s if s is not None else "")
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
 @app.route("/api/inbox/probe")
 def inbox_probe():
     """
     诊断：列出邮箱里的文件夹树，以及每个文件夹近期能匹配上几封报表邮件。
     Windows 上第一次配置时先跑这个，再决定 outlook.folder 填什么。只读，不存档。
+
+    浏览器打开时给一张排好序的表（结论写在最上面）；?format=json 拿原始数据。
     """
     try:
-        return jsonify(mailbox.probe(mailbox.load_config()))
+        r = mailbox.probe(mailbox.load_config())
     except mailbox.MailboxError as e:
         abort(400, description=str(e))
     except Exception as e:
         abort(500, description=f"探测失败：{e}")
+
+    fmt = (request.args.get("format") or "").lower()
+    wants_json = fmt == "json" or (not fmt and not request.accept_mimetypes.accept_html)
+    if wants_json:
+        return jsonify(r)
+    return Response(_probe_html(r), mimetype="text/html; charset=utf-8")
 
 
 @app.route("/api/inbox/file/<kind>/<date>")

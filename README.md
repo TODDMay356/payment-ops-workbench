@@ -96,7 +96,7 @@
 | GET | `/api/inbox/latest` | 邮箱取到的报表现状（首页待办卡片、转化率页自动加载） |
 | POST | `/api/inbox/fetch` | 立即收取一次（和定时走同一条路径） |
 | POST | `/api/inbox/run-order-monitor` | 用存档的两份报表跑出单监控（首页那个按钮） |
-| GET | `/api/inbox/probe` | **诊断**：邮箱文件夹树 + 每个文件夹匹配到几封 |
+| GET | `/api/inbox/probe` | **诊断**：邮箱文件夹树 + 匹配数。浏览器打开是一张表，`?format=json` 给原始数据 |
 | GET | `/api/inbox/file/<类型>/<日期>` | 把存档报表发给工具页 |
 | POST | `/api/inbox/analyzed` | 工具页解析完回报，首页卡片据此消掉 |
 | GET | `/api/jobs/<id>` | 任务快照（断线重连用） |
@@ -178,8 +178,9 @@ python 出单监控_workbench.py \
 http://127.0.0.1:5050/api/inbox/probe
 ```
 
-它会列出完整的文件夹树，以及每个文件夹近 10 天里匹配到几封报表邮件。
-**记下 `matched` 大于 0 的那一项的 `path`**。这一步只读，不下载任何东西，可以随便点。
+浏览器里会直接给一张表，**结论写在最上面**：找到了就把该填的路径高亮出来，
+一封都没匹配到就说清楚是「文件夹找错了」还是「主题关键词对不上」。
+这一步只读，不下载任何东西，可以反复刷新。（要原始 JSON 就加 `?format=json`。）
 
 **第二步：填 `mailbox.json`。**
 复制 `mailbox.example.json` 为 `mailbox.json`，改两个地方：
@@ -266,6 +267,15 @@ A: 日志直接显示在页面里。状态栏会分两种情况说清楚：
   三个都要有：`pandas`（分析）、`openpyxl`（读 .xlsx）、`xlrd`（读 .xls）。
   报表两种格式都出现过 —— pandas 是按**文件内容的魔数**认格式的，不是看扩展名，
   所以一份名字叫 .xlsx 的老格式文件照样会去找 xlrd。
+
+**Q: probe 页面说"有邮件，但一封都没匹配上"？**
+A: 文件夹是对的，问题在主题关键词。当前规则找的是主题含「支付转化率统计表」或
+「新商户审核耗时报表」的邮件。打开那两封信抄下**完整主题**，对着改 `mailbox.json` 的
+`rules` —— `subject_contains` 要能对上，`date_regex` 要能从主题里抠出日期。
+
+**Q: probe 页面说"一封都没扫到"？**
+A: 所有文件夹近期都是 0 封，跟主题规则无关。要么邮件在另一个邮箱账户下
+（表里只有 Outlook 已加载的账户），要么报表比 `lookback_days` 还旧 —— 把它调大再试。
 
 **Q: `/api/inbox/probe` 报"连不上 Outlook"？**
 A: 两种可能：装的是 Windows 自带的「新版 Outlook」（不提供 COM，用不了这条路，

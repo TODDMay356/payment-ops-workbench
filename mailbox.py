@@ -619,14 +619,20 @@ def probe(cfg: dict) -> dict:
     if (cfg.get("provider") or "outlook").lower() == "folder":
         d = ((cfg.get("folder") or {}).get("dir") or "").strip()
         names = sorted(p.name for p in Path(d).iterdir()) if d and Path(d).is_dir() else []
-        hits = 0
+        hits = recent = 0
         for m in _iter_folder(cfg):
+            recent += 1
             try:
                 if match(m, cfg):
                     hits += 1
             except MailboxError:
                 pass
-        return {"ok": True, "provider": "folder", "dir": d, "files": names[:50], "matched": hits}
+        # folders 的形状和 outlook 那边保持一致，好让同一个页面渲染两种 provider
+        return {"ok": True, "provider": "folder", "dir": d, "files": names[:50],
+                "matched": hits, "inbox_name": d,
+                "lookback_days": int((cfg.get("outlook") or {}).get("lookback_days", 10)),
+                "folders": [{"path": d, "name": d, "depth": 0,
+                             "recent": recent, "matched": hits}]}
 
     pythoncom, win32 = _com()
     lookback = int((cfg.get("outlook") or {}).get("lookback_days", 10))
