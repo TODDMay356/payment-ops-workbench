@@ -6,10 +6,12 @@ mailbox.py 只管「取信存档」，这里管「什么时候取」和「取到
 
 # 两件事的分工
 
-    出单监控   全自动。取到 D 和 D-1 两份报表就直接跑，群通知 + BD 私聊照发。
-              （用户明确要求：不能等人手动触发）
-    转化率     只存档。解析在浏览器里做，而且用户要「首页出待办卡片，点了才打开」。
-              这里一个字都不推给飞书。
+    出单监控   只存档。跑不跑由人在首页点 —— 那一下会往群里发通知、给 BD 发私聊，
+              不该由定时器替人决定。省掉的是「下载附件 → 选文件」，不是「决定发不发」。
+              （config 里留了 order_monitor.auto_run，默认 false；真想全自动才打开）
+    转化率     只存档。解析在浏览器里做，首页出待办卡片，点了才打开分析页。
+
+一句话：这个模块只负责把文件准备好，两个「要不要发出去」的决定都留给人。
 
 # 为什么不用 APScheduler
 
@@ -160,8 +162,10 @@ class Automation:
 
     def _maybe_run_order_monitor(self, cfg: dict) -> dict:
         om = cfg.get("order_monitor") or {}
-        if not om.get("auto_run", True):
-            return {"skipped": "auto_run=false"}
+        # 默认关。取信是省事，自动往群里发消息是另一回事 —— 什么时候发由人决定。
+        # 首页会出一个「用邮箱里的报表跑」按钮，一下就跑，也不用再选文件。
+        if not om.get("auto_run", False):
+            return {"skipped": "auto_run 未开启，等人在首页点"}
         if not self.launcher:
             return {"skipped": "没有注入 launcher"}
 

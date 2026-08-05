@@ -511,6 +511,10 @@ def _launch_order_monitor(today_path: str, yesterday_path: str,
 
     label = {"both": "群通知 + BD 私聊", "group": "仅群通知", "dm": "仅 BD 私聊"}.get(mode, mode)
     prefix = "自动 · " if source == "auto" else ""
+    # 用邮箱存档跑的（无论是人点的还是定时触发的）都记进 state，首页据此把卡片翻成"已完成"。
+    # 手动上传那条路不记 —— 那是临时文件，和"哪天的报表跑过了"不是一回事，
+    # 而且记了会让人想重跑时被自己挡住。
+    remember = source in ("auto", "inbox")
 
     def _done(job):
         """出单监控脚本直连飞书，不走中转路由，所以流水得在这里补记。"""
@@ -522,8 +526,7 @@ def _launch_order_monitor(today_path: str, yesterday_path: str,
             detail = (f"{prefix}{report_date} · 失败（退出码 {job.returncode}）"
                       f"{('：' + tail[:120]) if tail else ''}")
         _record("order-monitor", ok, detail)
-        if source == "auto":
-            # 只有自动跑的才记进 state —— 手动重跑不该被"今天已经跑过了"挡住
+        if remember:
             try:
                 mailbox.mark_run(report_date, ok, detail, job_id=job.id)
             except Exception:
@@ -637,6 +640,50 @@ def inbox_file(kind, date):
         abort(404, description=f"存档里没有 {mailbox.KIND_LABEL[kind]} {date} 的报表")
     return send_from_directory(p.parent, p.name, as_attachment=False,
                                download_name=f"{mailbox.KIND_LABEL[kind]}_{date}{p.suffix}")
+
+
+@app.route("/api/inbox/run-order-monitor", methods=["POST"])
+def inbox_run_order_monitor():
+    """
+    用邮箱存档里的两份报表跑一次出单监控。首页那个按钮走这里。
+
+    和 /api/run/order-monitor 的区别只有文件从哪来：那个收表单上传，
+    这个直接用 data/inbox 里按业务日期存好的。省掉「下载附件 → 选文件」两步，
+    但**什么时候跑仍然由人决定** —— 这一步会发群通知和 BD 私聊。
+
+    Body: {"date": "2026-08-02", "password": "可选，不填则用 mailbox.json 里的"}
+    """
+    body = request.get_json(silent=True) or {}
+    cfg = mailbox.load_config()
+
+    date = body.get("date") or ""
+    if not date:
+        dates = mailbox.archived_dates("order_monitor")
+        if not dates:
+            abort(400, description="邮箱存档里还没有出单监控报表")
+        date = dates[0]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        abort(400, description="date 格式应为 YYYY-MM-DD")
+
+    today_p = mailbox.find_archived("order_monitor", date)
+    if not today_p:
+        abort(400, description=f"存档里没有 {date} 的报表")
+    prev = mailbox.prev_day(date)
+    yday_p = mailbox.find_archived("order_monitor", prev)
+    if not yday_p:
+        # 脚本要两天快照做对比，缺一天是真跑不了
+        abort(400, description=f"缺 {prev} 的报表，出单监控需要两天才能做对比。可以用下面的表单手动传两份。")
+
+    password = body.get("password") or (cfg.get("order_monitor") or {}).get("password") or ""
+    if not password:
+        abort(400, description="需要脚本密码：在 mailbox.json 的 order_monitor.password 里填上，"
+                               "或者在弹出的输入框里输一次。")
+
+    try:
+        r = _launch_order_monitor(str(today_p), str(yday_p), password, date, source="inbox")
+    except ValueError as e:
+        abort(400, description=str(e))
+    return jsonify({**r, "date": date, "prev_date": prev})
 
 
 @app.route("/api/inbox/analyzed", methods=["POST"])

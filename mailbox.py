@@ -558,7 +558,7 @@ def purge(cfg: dict):
 
 # ---------------------------------------------------------------- 索引
 
-def _prev_day(date: str) -> str:
+def prev_day(date: str) -> str:
     return (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
@@ -592,7 +592,7 @@ def latest(cfg: dict) -> dict:
     odates = archived_dates("order_monitor")
     if odates:
         d = odates[0]
-        prev = _prev_day(d)
+        prev = prev_day(d)
         ready = find_archived("order_monitor", prev) is not None
         out["order_monitor"] = {
             "date": d,

@@ -44,9 +44,9 @@
     "on_start": true
   },
 
-  "_comment_order_monitor": "auto_run = 取到报表后直接跑完（群通知 + BD 私聊都发，不需要人点）。跑之前需要同时有 D 和 D-1 两天的报表 —— 脚本是拿两天快照做对比的。password 是出单监控.py 里的那个 PASSWORD，本来就明文硬编码在脚本里。",
+  "_comment_order_monitor": "password 是出单监控.py 里的那个 PASSWORD（本来就明文硬编码在脚本里）。填了之后首页那个「用 X 的报表开始运行」按钮点一下就跑，不用每次输；不填则点的时候弹框问一次。auto_run 默认 false：附件自动备好，但什么时候发群通知和 BD 私聊由你点按钮决定。真想连点都省了才改成 true —— 那样每天到点自己就发出去了。",
   "order_monitor": {
-    "auto_run": true,
+    "auto_run": false,
     "password": ""
   },
 

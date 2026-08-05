@@ -347,7 +347,7 @@
           <div class="ico amber" aria-hidden="true">◪</div>
           <div class="t">
             <h3>出单耗时监控</h3>
-            <p>对比今天和昨天两份报表，分类后发群通知和 BD 私聊。取到邮件会自动跑，不用手动触发。</p>
+            <p>对比今天和昨天两份报表，分类后发群通知和 BD 私聊。邮件里的附件会自动备好，点一下就跑。</p>
           </div>
         </div>
         <div class="act-body">
@@ -633,25 +633,71 @@ async function refreshInbox(){
     }
   }
 
-  /* 出单监控：自动跑的结果 */
+  /* 出单监控：文件已经备好，跑不跑由人点 —— 那一下会往群里发通知、给 BD 发私聊 */
   const o=info.order_monitor, note=$('#omInboxNote');
-  if(!o){
-    note.hidden=true;
-  }else if(o.run && o.run.ok){
-    // 跑成功要排在 ready 判断前面：跑完之后 D-1 那份可能已经被保留期清掉了，
-    // 那时 ready 会变 false，但事情早就办完了，不该再报警
-    note.hidden=false; note.className='note ok';
-    note.innerHTML=`✅ <b>${o.date}</b> 已自动跑完（${esc(o.run.detail||'群通知 + BD 私聊')}），不需要再手动传。`;
-  }else if(!o.ready){
-    // 脚本要两天快照做对比，缺一天是真跑不了 —— 说清楚缺哪天，别让人以为坏了
+  if(omBusy) return;              // 正在跑，保持现状
+  if(!o || (!o.ready && !(o.run && o.run.ok))){
+    // 没有存档、或缺 D-1（脚本要两天快照做对比）—— 这时手动表单是唯一入口，
+    // 它的按钮得保持主操作样式
+    $('#omRun').classList.add('primary');
+    if(!o){ note.hidden=true; return; }
     note.hidden=false; note.className='note warn';
     note.innerHTML=`已取到 <b>${o.date}</b> 的报表，但${esc(o.reason)}。下面手动传两份也可以。`;
-  }else if(o.run){
-    note.hidden=false; note.className='note warn';
-    note.innerHTML=`<b>${o.date}</b> 自动运行失败：${esc(o.run.detail||'')}。可以在下面手动重跑。`;
-  }else{
-    note.hidden=false; note.className='note';
-    note.innerHTML=`已取到 <b>${o.date}</b> 和 <b>${o.prev_date}</b> 两份报表，等待自动运行。`;
+    return;
+  }
+  note.hidden=false;
+
+  const ran=o.run && o.run.ok;
+  note.className='note '+(ran?'ok':'');
+  // 文件已经备好时，主操作是上面那个按钮；下面的手动表单降级成备用入口，
+  // 免得一张卡片里出现两个抢眼的蓝按钮，不知道该点哪个
+  $('#omRun').classList.toggle('primary', false);
+  const head=document.createElement('div');
+  head.innerHTML = ran
+    ? `✅ <b>${o.date}</b> 已跑完（${esc(o.run.detail||'群通知 + BD 私聊')}）`
+    : `📥 已备好 <b>${o.date}</b> 和 <b>${o.prev_date}</b> 两份报表，不用再选文件。`;
+  const act=document.createElement('div');
+  act.className='row'; act.style.marginTop='8px';
+  const b=document.createElement('button');
+  b.type='button'; b.className='btn'+(ran?'':' primary');
+  b.textContent = ran ? `用 ${o.date} 的报表再跑一次` : `用 ${o.date} 的报表开始运行`;
+  b.addEventListener('click',()=>runFromInbox(o.date));
+  const hint=document.createElement('span');
+  hint.style.cssText='font-size:12px;color:var(--ink-3)';
+  hint.textContent='会发群通知和 BD 私聊。';
+  act.append(b,hint);
+  note.replaceChildren(head,act);
+}
+
+/* 用邮箱存档里的两份报表跑一次。日志复用下面出单监控那块，不另开一处。 */
+async function runFromInbox(date, password){
+  const btn=$('#omRun');
+  omBusy=true;
+  $('#omOut').textContent=''; $('#omLog').hidden=false;
+  $('#omSpin').style.display=''; $('#omState').className='st run'; $('#omState').textContent='运行中';
+  btn.disabled=true; btn.textContent='启动中…';
+  try{
+    const body={date}; if(password) body.password=password;
+    const res=await fetch('/api/inbox/run-order-monitor',
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await res.json();
+    if(!res.ok || !data.ok){
+      // 没在 mailbox.json 里存密码时，问一次就好，不强迫他去改配置
+      if(!password && /密码/.test(data.msg||'')){
+        const pw=prompt('脚本密码（填进 mailbox.json 的 order_monitor.password 就不用每次输）：');
+        if(pw){ return runFromInbox(date, pw); }
+      }
+      omAppend('[工作台] '+(data.msg||`HTTP ${res.status}`));
+      omFinish('err','未启动');
+      return;
+    }
+    btn.textContent='运行中…';
+    omAppend(`[工作台] 用邮箱存档的 ${data.date} / ${data.prev_date} 两份报表启动`
+             +`（${data.mode==='both'?'群通知 + BD 私聊':data.mode}）：`);
+    omStream(data.job_id);
+  }catch(err){
+    omAppend('[工作台] 请求失败：'+err.message);
+    omFinish('err','未启动');
   }
 }
 
@@ -697,6 +743,7 @@ async function refreshActivity(){
 
 /* ---------- 出单监控：跑 + 实时日志 ---------- */
 let omSource=null;
+let omBusy=false;   // 跑的过程中别让 20 秒一次的 refreshInbox 把按钮重画掉
 
 function omAppend(line){
   const out=$('#omOut');
@@ -705,6 +752,7 @@ function omAppend(line){
   if(atBottom) out.scrollTop = out.scrollHeight;
 }
 function omFinish(cls, text){
+  omBusy=false;
   $('#omSpin').style.display='none';
   $('#omState').className='st '+cls;
   $('#omState').textContent=text;
@@ -739,6 +787,7 @@ function omStream(jobId){
 $('#omForm').addEventListener('submit', async ev=>{
   ev.preventDefault();
   const btn=$('#omRun'), hint=$('#omHint');
+  omBusy=true;
   btn.disabled=true; btn.textContent='上传中…'; hint.textContent='';
   $('#omOut').textContent=''; $('#omLog').hidden=false;
   $('#omSpin').style.display=''; $('#omState').className='st run'; $('#omState').textContent='运行中';
