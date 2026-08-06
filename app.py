@@ -42,16 +42,37 @@ from werkzeug.exceptions import HTTPException
 
 import requests
 
-import automation
-import feishu
-import jobs
-import mailbox
-
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "config.json"
 EXAMPLE_CONFIG_PATH = HERE / "config.example.json"
 STATIC_DIR = HERE / "static"
+
+
+# ---------- 同目录模块 ----------
+# 这四个 .py 和 app.py 是一整套。更新时如果只复制了 app.py，
+# 这里会抛 ModuleNotFoundError，进程直接退出 —— 启动器只能把一段 traceback
+# 弹给用户看，而真正要做的事（"把同目录的 .py 一起复制过来"）一个字都没写。
+# 这里只对**同目录 .py 缺失**这一种情况改写措辞；第三方包缺失照原样抛，
+# 那是另一回事（去 pip install），套用这句话反而误导。
+_LOCAL_MODULES = ("automation", "feishu", "jobs", "mailbox")
+
+try:
+    import automation
+    import feishu
+    import jobs
+    import mailbox
+except ImportError as _e:
+    _name = getattr(_e, "name", "") or ""
+    if _name in _LOCAL_MODULES and not (HERE / f"{_name}.py").exists():
+        print(f"[启动失败] 缺少 {_name}.py", file=sys.stderr)
+        print(f"           它和 app.py 在同一个目录（{HERE}），是随版本一起新增的文件。",
+              file=sys.stderr)
+        print(f"           更新时只复制 app.py 不够 —— 同目录的 .py 要一起覆盖，"
+              f"最省心是整个目录覆盖（config.json / mailbox.json / data\\ 不在仓库里，不会被动）。",
+              file=sys.stderr)
+        raise SystemExit(2)
+    raise
 
 
 # ---------- 配置加载 ----------
@@ -95,7 +116,15 @@ app = Flask(__name__, template_folder="templates", static_folder="static")
 # 中文不要转义成 \uXXXX。默认行为下，任何带中文的接口在浏览器里都是
 # {"name":"存档"} 这种样子 —— 排查问题时人根本读不了，
 # 而这些接口（尤其 /api/inbox/probe）本来就是给人打开看的。
-app.json.ensure_ascii = False
+#
+# app.json 要 Flask >= 2.2。requirements.txt 写的是 flask>=3.0，正常装没问题，
+# 但如果 venv 是很早以前建的，这一行会 AttributeError —— 为了个显示细节让工作台起不来，
+# 不值得。降级成一条警告。
+try:
+    app.json.ensure_ascii = False
+except AttributeError:
+    log.warning("当前 Flask 版本不支持 app.json.ensure_ascii —— 接口里的中文会显示成 "
+                "\\uXXXX（不影响功能）。想修：venv\\Scripts\\python.exe -m pip install -U flask")
 
 # 在模块级初始化飞书客户端（含后台续期线程）。
 # 原来只在 main() 里 init，用 flask run / waitress 之类的方式启动时就不会执行，

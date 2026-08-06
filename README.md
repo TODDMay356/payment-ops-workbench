@@ -14,6 +14,26 @@
 
 双击 `install.bat`：创建 `venv\`、装依赖、把 `config.example.json` 复制成 `config.json`。
 
+## 更新到新版本
+
+**整个 `workbench` 目录覆盖过去就行。** 你的配置和数据都不在仓库里，覆盖不会碰到它们：
+
+| 不会被覆盖（在 `.gitignore` 里） | 是什么 |
+|---|---|
+| `config.json` | 飞书凭据、出单监控路径 |
+| `mailbox.json` | 邮箱配置 |
+| `data/` | 邮箱取回来的报表存档和状态 |
+| `venv/` | 虚拟环境 |
+
+**不建议只挑几个文件复制。** `app.py` / `feishu.py` / `jobs.py` / `mailbox.py` /
+`automation.py` 是一整套，`app.py` 会 import 其余几个 —— 只复制 `app.py`
+就会在启动时报「缺少 xxx.py」。真要挑着复制，**同目录的 `.py` 一个都不能少**。
+
+更新完双击 `启动工作台.vbs`（它会先关掉旧进程）。确认新版生效：打开
+`http://127.0.0.1:5050/api/inbox/probe` —— 出得来页面就是新版。
+
+---
+
 ## 填配置
 
 记事本打开 `config.json`：
