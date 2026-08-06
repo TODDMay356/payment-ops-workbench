@@ -64,6 +64,11 @@
   }
 
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  /* hidden 属性靠浏览器默认样式的 display:none 生效，而作者写的任何 display 都会盖过它。
+     本页大量元素是 flex / inline-flex，于是 el.hidden = true 对它们**完全无效** ——
+     「邮箱自动化没配置时收取栏应该藏起来」就是这么失效的。这里一次性兜住，
+     省得每加一个可隐藏元素就要记得补一条 .xxx[hidden]{display:none}。 */
+  [hidden]{display:none !important}
   html,body{height:100%}
   body{
     font-family:var(--ui); font-size:14px; line-height:1.6;
@@ -116,7 +121,6 @@
 
   /* ---------- 首页 ---------- */
   #homeView{flex:1; overflow-y:auto; padding:26px 28px 72px}
-  #homeView[hidden]{display:none}
   .wrap{max-width:940px; margin:0 auto; display:flex; flex-direction:column; gap:18px}
 
   .head{display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap}
@@ -219,7 +223,6 @@
 
   /* 运行日志 */
   .log{border:1px solid var(--line); border-radius:var(--r-m); overflow:hidden; background:var(--surface-2)}
-  .log[hidden]{display:none}
   .log-head{display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line);
             font-size:12px; font-weight:600; color:var(--ink-2)}
   .log-head .st{margin-left:auto; font-family:var(--mono); font-size:11.5px; font-variant-numeric:tabular-nums}
@@ -249,7 +252,6 @@
 
   /* ---------- 工具 iframe ---------- */
   #toolView{flex:1; display:flex; flex-direction:column; overflow:hidden}
-  #toolView[hidden]{display:none}
   .tool-bar{display:flex; align-items:center; gap:11px; padding:9px 16px;
             background:var(--surface); border-bottom:1px solid var(--line); flex-shrink:0}
   .tool-bar .ttl{font-size:13.5px; font-weight:700}
@@ -591,13 +593,18 @@ async function refreshInbox(){
 
   const bar=$('#inboxBar');
   if(!info.enabled){
-    bar.hidden=true;
-    // 没开邮箱自动化不是错，卡片保持原来的手动形态即可
+    // 没配置不是故障。但也别一声不吭 —— 那样用户不知道这功能存在、更不知道差什么。
+    // 给一句能照做的提示，同时把「立即收取」收起来：它现在点了必然失败。
+    bar.hidden=false;
+    $('#inboxFetch').hidden=true;
+    $('#inboxText').textContent = info.reason || '邮箱自动化未配置';
+    // 卡片保持原来的手动形态
     $('#convInboxTag').hidden=true;
     $('#omInboxNote').hidden=true;
     return;
   }
   bar.hidden=false;
+  $('#inboxFetch').hidden=false;
   const lf=info.last_fetch;
   $('#inboxText').textContent = lf
     ? `上次收取 ${fmtClock(lf.ts)}${lf.saved?` · 取到 ${lf.saved} 份`:' · 无新报表'}`

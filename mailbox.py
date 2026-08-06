@@ -101,9 +101,13 @@ def load_config() -> dict:
     读 mailbox.json。不存在就返回 enabled=False —— 没配邮箱不该让工作台起不来。
     """
     if not CONFIG_PATH.exists():
+        # 说清楚是 .json 不是 .py —— 两个名字只差扩展名，实际被认错过：
+        # mailbox.py 是代码（跟着仓库走），mailbox.json 是配置（要自己建，里面有密码，
+        # 所以在 .gitignore 里、仓库里不会有）。
         return _with_defaults({
             "enabled": False,
-            "_reason": "未找到 mailbox.json（照着 mailbox.example.json 建一个）",
+            "_reason": "还没建配置文件 mailbox.json（注意是 .json，不是代码文件 mailbox.py）"
+                       "—— 把 mailbox.example.json 复制一份、改名成 mailbox.json 即可",
         })
     try:
         cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))

@@ -215,6 +215,11 @@ http://127.0.0.1:5050/api/inbox/probe
 **第二步：填 `mailbox.json`。**
 复制 `mailbox.example.json` 为 `mailbox.json`，改两个地方：
 
+> ⚠️ **`mailbox.json` 和 `mailbox.py` 是两回事**，只差一个扩展名，很容易看错：
+> `mailbox.**py**` 是代码，跟着仓库走，你不用管；
+> `mailbox.**json**` 是配置，**仓库里没有**（它要放密码，在 `.gitignore` 里），得你自己建。
+
+
 | 字段 | 填什么 |
 |---|---|
 | `outlook.folder` | 上一步记下的 path，层级用 `/` 分隔，如 `收件箱/报表`。留空 = 默认收件箱 |
