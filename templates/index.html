@@ -255,7 +255,16 @@
   .tool-bar{display:flex; align-items:center; gap:11px; padding:9px 16px;
             background:var(--surface); border-bottom:1px solid var(--line); flex-shrink:0}
   .tool-bar .ttl{font-size:13.5px; font-weight:700}
-  #toolFrame{flex:1; width:100%; border:0; background:var(--surface)}
+  .tool-bar #reloadTool{margin-left:auto; font-size:12px}
+  /* 每个工具一个 iframe 叠在这里，只有当前那个不带 hidden */
+  #toolFrames{flex:1; min-height:0; display:flex}
+  #toolFrames iframe{flex:1; width:100%; border:0; background:var(--surface)}
+
+  /* 轨道上的状态点：这个工具里已经有解析好的数据，切走不会丢 */
+  .rail button .dot{
+    position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%;
+    background:var(--ok); box-shadow:0 0 0 2px var(--surface);
+  }
 
   @media (max-width:640px){
     #homeView{padding:18px 14px 60px}
@@ -386,6 +395,31 @@
         </div>
       </section>
 
+      <!-- ③ 商户成功率 —— 以前只是页脚一行小字，且密码挡在点进去之后。
+           它是个平级工具，密码提到这里问，进去就能直接用。 -->
+      <section class="act">
+        <div class="act-head">
+          <div class="ico" aria-hidden="true">◱</div>
+          <div class="t">
+            <h3>商户转化率 &amp; 成功率分析</h3>
+            <p>转化率发现异常之后，来这里按商户、按失败原因深挖。</p>
+          </div>
+        </div>
+        <div class="act-body">
+          <div class="tags">
+            <span class="tag" id="maTag">需要密码</span>
+          </div>
+          <form id="maForm" class="row">
+            <input type="password" id="maPw" placeholder="访问密码"
+                   autocomplete="current-password"
+                   style="font-family:inherit;font-size:12.5px;background:var(--surface-2);
+                          border:1px solid var(--line);border-radius:var(--r-s);padding:7px 9px;width:170px">
+            <button type="submit" class="btn primary" id="maGo">解锁并打开</button>
+            <span id="maErr" style="font-size:12px;color:var(--crit)"></span>
+          </form>
+        </div>
+      </section>
+
       <div class="sec"><h2>今天同步了什么</h2><span class="rule"></span></div>
 
       <section class="feed" id="feed">
@@ -393,20 +427,25 @@
       </section>
 
       <div class="foot">
-        <button type="button" class="btn quiet" data-open-tool="merchant">有异常？打开商户成功率做深挖 →</button>
         <span style="margin-left:auto">中转地址 <code id="addr">—</code></span>
       </div>
 
      </div>
     </div>
 
-    <!-- ================= 工具页 ================= -->
+    <!-- ================= 工具页 =================
+         每个工具一个 iframe，首次打开时建，之后只切换显示。
+         以前是两个工具共用一个 iframe、回首页还置成 about:blank ——
+         解析结果活在 iframe 文档的 JS 内存里，换 src 就等于把它连同结果一起丢掉。
+         4.6MB 的报表重解析一次要几十秒，切一趟商户回来就得重传。 -->
     <div id="toolView" hidden>
       <div class="tool-bar">
         <button type="button" class="btn" id="backBtn">← 返回工作台</button>
         <span class="ttl" id="toolTitle"></span>
+        <button type="button" class="btn quiet" id="reloadTool"
+                title="丢掉当前工具里已加载的数据，从头开始">重新加载本工具</button>
       </div>
-      <iframe id="toolFrame" title="工具页" src="about:blank"></iframe>
+      <div id="toolFrames"></div>
     </div>
 
   </div>
@@ -454,25 +493,144 @@ $('#addr').textContent = API;
 /* ---------- 导航 ---------- */
 const TOOLS={conversion:'每日转化率数据监控', merchant:'商户转化率 & 成功率分析'};
 
+let activeTool = null;
+
+/** 取这个工具的 iframe，没有就建一个。query 变了才重新 load。 */
+function frameFor(name, query){
+  const q = query || '';
+  let fr = document.querySelector(`#toolFrames iframe[data-tool="${name}"]`);
+  if(!fr){
+    fr = document.createElement('iframe');
+    fr.title = TOOLS[name] || name;
+    fr.dataset.tool = name;
+    fr.dataset.query = q;
+    fr.src = '/' + name + q;
+    $('#toolFrames').appendChild(fr);
+    return fr;
+  }
+  // 已经建过了。只有 query 真的变了才重新加载 ——
+  // 否则每次从首页卡片点进来都会把里面已经解析好的结果冲掉。
+  if(q && fr.dataset.query !== q){
+    fr.dataset.query = q;
+    fr.src = '/' + name + q;
+  }
+  return fr;
+}
+
 function openTool(name, query){
   $('#homeView').hidden = true;
   $('#toolView').hidden = false;
   $('#toolTitle').textContent = TOOLS[name] || name;
   // query 用来把「加载哪天的邮箱存档」告诉工具页，见 conversion.html 的 inboxAutoLoad
-  $('#toolFrame').src = '/' + name + (query || '');
+  frameFor(name, query);
+  // 其余工具只是藏起来，不动 src —— 它们的解析结果要留着
+  $$('#toolFrames iframe').forEach(f=> f.hidden = (f.dataset.tool !== name));
+  activeTool = name;
   $$('.rail button[data-nav]').forEach(b=>b.setAttribute('aria-current', String(b.dataset.nav===name)));
+  markLoaded();
 }
 function goHome(){
   $('#toolView').hidden = true;
-  $('#toolFrame').src = 'about:blank';
   $('#homeView').hidden = false;
+  activeTool = null;
   $$('.rail button[data-nav]').forEach(b=>b.setAttribute('aria-current', String(b.dataset.nav==='home')));
-  refreshActivity(); refreshInbox();
+  refreshActivity(); refreshInbox(); markLoaded();
+}
+
+/** 轨道上点一个小圆点，表示这个工具已经开过、里面有东西，切走不会丢。 */
+function markLoaded(){
+  $$('.rail button[data-nav]').forEach(b=>{
+    const name = b.dataset.nav;
+    const has = name !== 'home' &&
+                !!document.querySelector(`#toolFrames iframe[data-tool="${name}"]`);
+    let dot = b.querySelector('.dot');
+    if(has && !dot){
+      dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.title = '已加载，切走不会丢';
+      b.appendChild(dot);
+    }else if(!has && dot){
+      dot.remove();
+    }
+  });
+}
+
+/* ---------- 商户工具的访问密码 ----------
+   merchant.html 的 initLock() 是这么判的：
+       if(sessionStorage.getItem("ma_unlocked")==="1"){ lock.remove(); return; }
+   sessionStorage 按 origin 存，首页和 iframe 同源 —— 所以首页把这个 key 写上，
+   工具页就直接跳过锁屏。**merchant.html 一行都不用改**，单独打开它时锁照样在。
+
+   ⚠️ 下面这个哈希和 merchant.html 里的 ACCESS_SHA256 是同一个值，改密码要**两处一起改**。
+   不合并成一处是因为 merchant.html 要能脱离工作台单文件打开。 */
+const MA_SHA256 = "31d4f7e2146062c5d0325c92fbc6b099eda2f6b1f22f7f9e2e08add3af3c8612";
+const MA_KEY = 'ma_unlocked';
+
+async function sha256Hex(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function maUnlocked(){ return sessionStorage.getItem(MA_KEY) === '1'; }
+
+/** 已解锁就把密码框收起来，直接给「打开」。 */
+function syncMerchantCard(){
+  const form=$('#maForm'), tag=$('#maTag');
+  if(!form) return;
+  if(maUnlocked()){
+    tag.className='tag on'; tag.textContent='已解锁';
+    form.replaceChildren();
+    const b=document.createElement('button');
+    b.type='button'; b.className='btn primary'; b.textContent='打开商户成功率分析';
+    b.addEventListener('click',()=>openTool('merchant'));
+    const s=document.createElement('span');
+    s.style.cssText='font-size:12px;color:var(--ink-3)';
+    s.textContent='本次会话内不用再输密码。';
+    form.append(b,s);
+  }else{
+    tag.className='tag'; tag.textContent='需要密码';
+  }
+}
+
+$('#maForm').addEventListener('submit', async ev=>{
+  ev.preventDefault();
+  const pw=$('#maPw'), err=$('#maErr');
+  if(!pw) return;                       // 已解锁，表单已被换成按钮
+  err.textContent='';
+  if(!pw.value){ err.textContent='请输入密码'; pw.focus(); return; }
+  let hex='';
+  try{ hex = await sha256Hex(pw.value); }
+  catch(e){ err.textContent='浏览器不支持 crypto.subtle，请在工具页里输密码'; return; }
+  if(hex !== MA_SHA256){ err.textContent='密码不对'; pw.select(); return; }
+  sessionStorage.setItem(MA_KEY,'1');
+  syncMerchantCard();
+  openTool('merchant');
+});
+
+/* 常驻之后没有天然的重置入口了 —— 想换一份文件重来时点这个。 */
+$('#reloadTool').addEventListener('click', ()=>{
+  if(!activeTool) return;
+  const fr = document.querySelector(`#toolFrames iframe[data-tool="${activeTool}"]`);
+  if(!fr) return;
+  if(!confirm('会丢掉这个工具里已经加载的数据，从头开始。继续？')) return;
+  fr.dataset.query = '';
+  fr.src = '/' + activeTool;
+});
+/** 商户工具没解锁时，把人送回首页那张卡片去输密码，而不是打开一个锁屏。 */
+function navTo(name){
+  if(name === 'home') return goHome();
+  if(name === 'merchant' && !maUnlocked()){
+    goHome();
+    const pw=$('#maPw');
+    if(pw){ pw.focus(); $('#maErr').textContent='先在这里输密码'; }
+    return;
+  }
+  openTool(name);
 }
 $$('.rail button[data-nav]').forEach(b=>{
-  b.addEventListener('click',()=> b.dataset.nav==='home' ? goHome() : openTool(b.dataset.nav));
+  b.addEventListener('click',()=> navTo(b.dataset.nav));
 });
-$$('[data-open-tool]').forEach(b=> b.addEventListener('click',()=>openTool(b.dataset.openTool)));
+$$('[data-open-tool]').forEach(b=> b.addEventListener('click',()=>navTo(b.dataset.openTool)));
 $('#backBtn').addEventListener('click', goHome);
 
 /* ---------- 系统状态 ---------- */
@@ -820,6 +978,7 @@ $('#omForm').addEventListener('submit', async ev=>{
 refreshStatus();
 refreshActivity();
 refreshInbox();
+syncMerchantCard();   // 本次会话里已经解锁过就不再问密码
 setInterval(refreshStatus, 60000);
 setInterval(()=>{ if(!$('#homeView').hidden){ refreshActivity(); refreshInbox(); } }, 20000);
 </script>
