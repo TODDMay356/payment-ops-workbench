@@ -51,6 +51,9 @@ STATE_PATH = DATA_DIR / "state.json"
 # 但别接受任意扩展名 —— 存档目录是要喂给子进程和浏览器的。
 ALLOWED_EXT = {".xlsx", ".xls", ".xlsm", ".csv"}
 
+# 没匹配上时，每个文件夹最多显示几条主题原文给人看
+SAMPLE_SUBJECTS = 5
+
 # Outlook COM 不是线程安全的，工作台是多线程 Flask（定时线程 + 请求线程都可能进来）。
 # 全部串行化，简单可靠 —— 取信本来就是低频操作。
 _com_lock = threading.Lock()
@@ -72,23 +75,49 @@ DEFAULT_RULES = [
 KIND_LABEL = {"conversion": "转化率", "order_monitor": "出单监控"}
 
 
+def _with_defaults(cfg: dict) -> dict:
+    """
+    补默认值。**每条返回路径都要过这里，包括「文件不存在」那条。**
+
+    原来只有「读成功」那条补默认值，于是没建 mailbox.json 时 rules 是空的，
+    而 match() 是 `for rule in cfg.get("rules") or []` —— 一条规则都没有，
+    对任何邮件都返回 None。偏偏 /api/inbox/probe 的设计用法就是
+    「建配置之前先跑它看该填什么」，结果它在最需要它的时候必然报 0 封匹配，
+    而且和「文件夹找错了」「关键词对不上」长得一模一样，没法区分。
+
+    注意：**不碰 enabled**。补默认值只是让诊断能跑，不等于把功能打开 ——
+    fetch() 和 automation.start() 仍然靠 enabled 拦着。
+    """
+    cfg.setdefault("rules", DEFAULT_RULES)
+    cfg.setdefault("senders", [])
+    cfg.setdefault("provider", "outlook")
+    cfg.setdefault("outlook", {})
+    cfg.setdefault("retention_days", 30)
+    return cfg
+
+
 def load_config() -> dict:
     """
     读 mailbox.json。不存在就返回 enabled=False —— 没配邮箱不该让工作台起不来。
     """
     if not CONFIG_PATH.exists():
-        return {"enabled": False, "_reason": "未找到 mailbox.json（照着 mailbox.example.json 建一个）"}
+        return _with_defaults({
+            "enabled": False,
+            "_reason": "未找到 mailbox.json（照着 mailbox.example.json 建一个）",
+        })
     try:
         cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        return {"enabled": False, "_reason": f"mailbox.json 解析失败：{e}"}
+        return _with_defaults({"enabled": False, "_reason": f"mailbox.json 解析失败：{e}"})
     if not isinstance(cfg, dict):
-        return {"enabled": False, "_reason": "mailbox.json 顶层必须是一个对象"}
-    cfg.setdefault("rules", DEFAULT_RULES)
-    cfg.setdefault("senders", [])
-    cfg.setdefault("provider", "outlook")
-    cfg.setdefault("retention_days", 30)
-    return cfg
+        return _with_defaults({"enabled": False, "_reason": "mailbox.json 顶层必须是一个对象"})
+    cfg["_rules_from_file"] = isinstance(cfg.get("rules"), list)
+    return _with_defaults(cfg)
+
+
+def rules_source(cfg: dict) -> str:
+    """规则是自己配的还是内置的。probe 页面要显示这个 —— 用户得知道现在在拿什么匹配。"""
+    return "mailbox.json" if cfg.get("_rules_from_file") else "内置默认"
 
 
 # ---------------------------------------------------------------- 状态
@@ -609,6 +638,13 @@ def latest(cfg: dict) -> dict:
 
 # ---------------------------------------------------------------- 诊断
 
+def _rule_digest(cfg: dict) -> list[dict]:
+    """规则的人话摘要，给 probe 页面显示。用户要拿它和自己的邮件主题对照。"""
+    return [{"kind": r.get("kind") or "", "keyword": r.get("subject_contains") or "",
+             "date_regex": r.get("date_regex") or "", "date_format": r.get("date_format") or ""}
+            for r in (cfg.get("rules") or [])]
+
+
 def probe(cfg: dict) -> dict:
     """
     「我该往 outlook.folder 里填什么」的答案。
@@ -619,20 +655,28 @@ def probe(cfg: dict) -> dict:
     if (cfg.get("provider") or "outlook").lower() == "folder":
         d = ((cfg.get("folder") or {}).get("dir") or "").strip()
         names = sorted(p.name for p in Path(d).iterdir()) if d and Path(d).is_dir() else []
-        hits = recent = 0
+        hits = recent = near = 0
+        near_msg = ""
+        samples = []
         for m in _iter_folder(cfg):
             recent += 1
+            if len(samples) < SAMPLE_SUBJECTS:
+                samples.append((m.subject or "")[:120])
             try:
                 if match(m, cfg):
                     hits += 1
-            except MailboxError:
-                pass
+            except MailboxError as e:
+                near += 1
+                near_msg = near_msg or str(e)
         # folders 的形状和 outlook 那边保持一致，好让同一个页面渲染两种 provider
         return {"ok": True, "provider": "folder", "dir": d, "files": names[:50],
                 "matched": hits, "inbox_name": d,
+                "rules_source": rules_source(cfg), "rules": _rule_digest(cfg),
                 "lookback_days": int((cfg.get("outlook") or {}).get("lookback_days", 10)),
                 "folders": [{"path": d, "name": d, "depth": 0,
-                             "recent": recent, "matched": hits}]}
+                             "recent": recent, "matched": hits,
+                             "near": near, "near_msg": near_msg,
+                             "samples": samples if not hits else []}]}
 
     pythoncom, win32 = _com()
     lookback = int((cfg.get("outlook") or {}).get("lookback_days", 10))
@@ -649,7 +693,9 @@ def probe(cfg: dict) -> dict:
             for i in range(1, ns.Folders.Count + 1):
                 store = ns.Folders.Item(i)
                 for folder, path, depth in _walk_folders(store):
-                    matched = recent = 0
+                    matched = recent = near = 0
+                    near_msg = ""
+                    samples = []
                     try:
                         items = folder.Items
                         items.Sort("[ReceivedTime]", True)
@@ -661,17 +707,28 @@ def probe(cfg: dict) -> dict:
                             if ts and ts < cutoff:
                                 break
                             recent += 1
-                            m = Message(uid="", subject=str(getattr(it, "Subject", "")),
+                            subj = str(getattr(it, "Subject", ""))
+                            if len(samples) < SAMPLE_SUBJECTS:
+                                samples.append(subj[:120])
+                            m = Message(uid="", subject=subj,
                                         received_at=ts, sender=_sender_smtp(it))
                             try:
                                 if match(m, cfg):
                                     matched += 1
-                            except MailboxError:
-                                pass
+                            except MailboxError as e:
+                                # match() 只在一种情况下抛：关键词命中了，但日期抠不出来。
+                                # 那是「规则差一点就对了」，和「关键词根本没命中」是相反的两件事，
+                                # 修法也相反。原来这里一律 pass，两种病显示成同一个 0。
+                                near += 1
+                                near_msg = near_msg or str(e)
                     except Exception:
                         pass
                     tree.append({"path": path, "name": folder.Name, "depth": depth,
-                                 "recent": recent, "matched": matched})
+                                 "recent": recent, "matched": matched,
+                                 "near": near, "near_msg": near_msg,
+                                 # 主题原文。没匹配上时，答案通常就明晃晃写在这儿 ——
+                                 # 让人自己看，比让人把 JSON 贴给别人猜关键词快得多。
+                                 "samples": samples if not matched else []})
         finally:
             try:
                 pythoncom.CoUninitialize()
@@ -681,6 +738,7 @@ def probe(cfg: dict) -> dict:
     return {
         "ok": True, "provider": "outlook", "inbox_name": inbox_name,
         "lookback_days": lookback,
+        "rules_source": rules_source(cfg), "rules": _rule_digest(cfg),
         "hint": "把 matched > 0 的那个文件夹的完整路径填进 mailbox.json 的 outlook.folder，"
                 "层级之间用 / 分隔（例如 收件箱/报表）。",
         "folders": tree,

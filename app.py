@@ -627,17 +627,54 @@ def _probe_html(r: dict) -> str:
     等于没给答案。这里直接把结论写在最上面：该填哪个路径，或者为什么一封都没匹配到。
     """
     rows = sorted(r.get("folders") or [],
-                  key=lambda f: (-(f.get("matched") or 0), -(f.get("recent") or 0)))
+                  key=lambda f: (-(f.get("matched") or 0), -(f.get("near") or 0),
+                                 -(f.get("recent") or 0)))
     hit = [f for f in rows if (f.get("matched") or 0) > 0]
+    near = [f for f in rows if (f.get("near") or 0) > 0]
     any_mail = any((f.get("recent") or 0) > 0 for f in rows)
+    rules = r.get("rules") or []
 
-    if hit:
+    # 规则摘要固定显示。用户要拿它和自己的邮件主题对照 ——
+    # 没有这一行，「没匹配上」就只是个结论，不是线索。
+    if rules:
+        kw = "、".join(f'<code>{esc_html(x.get("keyword") or "(空)")}</code>' for x in rules)
+        rule_line = (f'<p class=hint>生效的规则（来自 <b>{esc_html(r.get("rules_source") or "?")}</b>）：'
+                     f'主题里要含 {kw}</p>')
+    else:
+        rule_line = ""
+
+    def sample_block(f, tip):
+        ss = f.get("samples") or []
+        if not ss:
+            return ""
+        lis = "".join(f"<li>{esc_html(s)}</li>" for s in ss)
+        return (f'<p class=hint style="margin-top:14px"><b>「{esc_html(f["path"])}」里最近的主题长这样：</b></p>'
+                f'<ul class=subj>{lis}</ul><p class=hint>{tip}</p>')
+
+    if not rules:
+        # 第四种情况，也是最容易踩的：还没建 mailbox.json，压根没有规则可匹配。
+        # 之前这种情况和「文件夹找错了」显示成一模一样的全 0。
+        head = ('<p class=bad><b>没有任何匹配规则，所以全是 0。</b></p><p class=hint>'
+                '<code>mailbox.json</code> 里的 <code>rules</code> 是空的。'
+                '把它删掉（用内置默认规则）或者照 <code>mailbox.example.json</code> 补全，再刷新本页。</p>')
+    elif hit:
         best = hit[0]
         head = (f'<p class=ok><b>找到了。</b>把下面这个路径原样填进 <code>mailbox.json</code> 的 '
                 f'<code>outlook.folder</code>：</p>'
                 f'<p class=path>{esc_html(best["path"])}</p>'
                 f'<p class=hint>近 {r.get("lookback_days")} 天里匹配到 {best["matched"]} 封报表邮件。'
                 f'{"另有 %d 个文件夹也有匹配，见下表。" % (len(hit) - 1) if len(hit) > 1 else ""}</p>')
+    elif near:
+        # 关键词对上了只差日期 —— 和「关键词没对上」修法完全相反，必须分开说
+        f = near[0]
+        head = (f'<p class=bad><b>关键词对上了，但日期抠不出来。</b></p>'
+                f'<p class=hint>「{esc_html(f["path"])}」里有 {f["near"]} 封邮件认得出是哪类报表，'
+                f'但主题里的日期不符合 <code>date_regex</code>。原始报错：</p>'
+                f'<p class=errbox>{esc_html(f.get("near_msg") or "")}</p>'
+                f'<p class=hint>照着上面这条主题改 <code>mailbox.json</code> 里对应规则的 '
+                f'<code>date_regex</code> 和 <code>date_format</code>。'
+                f'带横线的日期用 <code>(\\d{{4}}-\\d{{2}}-\\d{{2}})</code> + <code>%Y-%m-%d</code>，'
+                f'不带横线的用 <code>(\\d{{8}})</code> + <code>%Y%m%d</code>。</p>')
     elif not any_mail:
         head = ('<p class=bad><b>一封都没扫到。</b></p><p class=hint>所有文件夹近 '
                 f'{r.get("lookback_days")} 天都是 0 封邮件，说明不是主题规则的问题。'
@@ -645,16 +682,19 @@ def _probe_html(r: dict) -> str:
                 f'或者报表比 {r.get("lookback_days")} 天还旧 —— 可以把 '
                 '<code>outlook.lookback_days</code> 调大再试。</p>')
     else:
+        busiest = max(rows, key=lambda f: f.get("recent") or 0)
         head = ('<p class=bad><b>有邮件，但一封都没匹配上。</b></p><p class=hint>'
-                '说明文件夹能扫到，是<b>主题关键词对不上</b>。'
-                '当前规则找的是主题里含「支付转化率统计表」或「新商户审核耗时报表」的邮件。'
-                '把那两封邮件的<b>完整主题</b>抄下来，对照着改 <code>mailbox.json</code> 的 '
-                '<code>rules</code>；日期那段要能被 <code>date_regex</code> 抠出来。</p>')
+                '文件夹能扫到，是<b>主题关键词对不上</b>。</p>'
+                + sample_block(busiest,
+                               '把上面的主题和「生效的规则」对一下，改 <code>mailbox.json</code> 的 '
+                               '<code>rules</code>：<code>subject_contains</code> 要能对上，'
+                               '<code>date_regex</code> 要能从主题里抠出日期。'))
 
     trs = "".join(
-        f'<tr class="{"hit" if (f.get("matched") or 0) > 0 else ""}">'
+        f'<tr class="{"hit" if (f.get("matched") or 0) > 0 else ("near" if (f.get("near") or 0) > 0 else "")}">'
         f'<td>{esc_html(f["path"])}</td>'
         f'<td class=n>{f.get("recent") or 0}</td>'
+        f'<td class=n>{f.get("near") or 0}</td>'
         f'<td class=n>{f.get("matched") or 0}</td></tr>'
         for f in rows)
 
@@ -668,6 +708,8 @@ p{{margin:10px 0}} .hint{{color:#455065;font-size:13px}}
 .ok{{color:#0f9d63}} .bad{{color:#b7791f}}
 .path{{font:600 15px ui-monospace,Consolas,monospace;background:#e6f5ee;color:#0b6b45;
       padding:10px 13px;border-radius:6px;user-select:all;word-break:break-all}}
+.errbox{{font:13px ui-monospace,Consolas,monospace;background:#fdf4e3;color:#8a5a10;
+        padding:10px 13px;border-radius:6px;user-select:all;word-break:break-all}}
 code{{background:#f4f6fa;padding:1px 5px;border-radius:4px;font-size:12.5px}}
 table{{border-collapse:collapse;width:100%;margin-top:18px;background:#fff;
       border:1px solid #e3e8f0;border-radius:8px;overflow:hidden}}
@@ -676,19 +718,26 @@ th{{background:#f4f6fa;font-size:11px;letter-spacing:.05em;color:#7a8699}}
 td.n{{font:13px ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums;
      text-align:right;width:110px}}
 tr.hit td{{background:#e6f5ee;font-weight:600}}
+tr.near td{{background:#fdf4e3}}
+ul.subj{{margin:8px 0 0 0;padding:0;list-style:none}}
+ul.subj li{{font:12.5px ui-monospace,Consolas,monospace;padding:6px 11px;
+           background:#f4f6fa;border-radius:5px;margin-bottom:5px;word-break:break-all}}
 tr:last-child td{{border-bottom:0}}
 @media(prefers-color-scheme:dark){{
   body{{background:#0e1218;color:#e8ecf3}} .hint{{color:#a3aec1}}
   table{{background:#161b24;border-color:#272f3d}} th{{background:#1d232e;color:#727e93}}
   th,td{{border-color:#222a36}} code{{background:#1d232e}}
   .path{{background:#12281f;color:#3fbc86}} tr.hit td{{background:#12281f}}
+  tr.near td{{background:#2b2313}} ul.subj li{{background:#1d232e}}
+  .errbox{{background:#2b2313;color:#d9a441}}
 }}
 </style></head><body>
 <h1>邮箱文件夹探测</h1>
 <div class=sub>只读操作，不下载任何附件，可以反复刷新。
 共 {len(rows)} 个文件夹 · 回看 {r.get("lookback_days")} 天 · 默认收件箱叫「{esc_html(r.get("inbox_name") or "?")}」</div>
+{rule_line}
 {head}
-<table><tr><th>文件夹路径</th><th class=n>近期邮件</th><th class=n>匹配到报表</th></tr>{trs}</table>
+<table><tr><th>文件夹路径</th><th class=n>近期邮件</th><th class=n>差一点</th><th class=n>匹配到报表</th></tr>{trs}</table>
 <p class=hint style="margin-top:16px">想看原始 JSON：在地址后面加 <code>?format=json</code></p>
 </body></html>"""
 
