@@ -30,35 +30,53 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   /* ---- design tokens (light) ---- */
   :root{
     color-scheme:light;
-    --plane:#f7f8f6; --surface:#ffffff; --surface-2:#fbfcfb;
-    --ink:#141613; --ink-2:#53564e; --muted:#8a8d83;
-    --line:#e5e7e0; --line-2:#eef0ea; --ring:rgba(20,22,19,.08);
-    --brand:#1f7a4d; --brand-ink:#12603b; --brand-soft:#e8f4ec;
-    --series:#2a78d6; --series-soft:#cde2fb;
-    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
-    --lift:#2a78d6; --drag:#d03b3b; --mid:#eceef0;
-    --shadow:0 1px 2px rgba(20,22,19,.04),0 4px 16px rgba(20,22,19,.05);
+    --plane:#fafbfd; --surface:#ffffff; --surface-2:#f4f6fa;
+    --ink:#12161f; --ink-2:#455065; --muted:#7a8699;
+    --line:#e3e8f0; --line-2:#eef1f6;
+    /* 品牌色只给主操作和激活态。以前是绿的（#1f7a4d），和语义色 --good 撞成一族 ——
+       这两个页面全靠语义色传严重度，品牌和「好」看起来是一回事就会读错。
+       换成工作台外壳那支蓝，顺带解决工具是在外壳 iframe 里打开、点进去从蓝跳绿。 */
+    --brand:#1664ff; --brand-ink:#0b47b8; --brand-soft:#eaf1ff;
+    /* 语义色：独立于品牌色，四档递进 */
+    --good:#0f9d63; --warning:#b7791f; --serious:#c9622f; --critical:#d64541;
+    /* 语义底色 + 其上的文字色。以前这些是散在各条规则里的硬编码，
+       深色还要再写一遍覆盖 —— 收进 token 后组件只写一次。 */
+    --good-soft:#e6f5ee;  --good-on:#0b6b45;
+    --warn-soft:#fdf4e3;  --warn-on:#8a5a10;
+    --crit-soft:#fdedec;  --crit-on:#a32f2b;
+    --info-soft:#eaf1ff;  --info-on:#0b47b8;
+    --mid:#eceef2;
+    --shadow:0 1px 2px rgba(18,22,31,.04),0 4px 16px rgba(18,22,31,.05);
+    /* 字体不随主题变，只在浅色块里定义一次，深色块会继承 */
+    --ui:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   }
   @media (prefers-color-scheme:dark){ :root:where(:not([data-theme="light"])){
     color-scheme:dark;
-    --plane:#0d0d0c; --surface:#181917; --surface-2:#1f201d;
-    --ink:#f4f5ef; --ink-2:#c3c5ba; --muted:#8f9187;
-    --line:#2b2c28; --line-2:#242522; --ring:rgba(255,255,255,.10);
-    --brand:#3ea877; --brand-ink:#5cc493; --brand-soft:#15251d;
-    --series:#3987e5; --series-soft:#153356;
-    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#e06060;
-    --lift:#3987e5; --drag:#e06060; --mid:#2a2b28;
+    --plane:#0e1218; --surface:#161b24; --surface-2:#1d232e;
+    --ink:#e8ecf3; --ink-2:#a3aec1; --muted:#727e93;
+    --line:#272f3d; --line-2:#222a36;
+    --brand:#5b8dff; --brand-ink:#a8c4ff; --brand-soft:#16213c;
+    --good:#3fbc86; --warning:#d9a441; --serious:#e08a5a; --critical:#ef6f6b;
+    --good-soft:#12281f;  --good-on:#3fbc86;
+    --warn-soft:#2b2313;  --warn-on:#d9a441;
+    --crit-soft:#2e1817;  --crit-on:#ef6f6b;
+    --info-soft:#16213c;  --info-on:#a8c4ff;
+    --mid:#2a3140;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
   }}
   :root[data-theme="dark"]{
     color-scheme:dark;
-    --plane:#0d0d0c; --surface:#181917; --surface-2:#1f201d;
-    --ink:#f4f5ef; --ink-2:#c3c5ba; --muted:#8f9187;
-    --line:#2b2c28; --line-2:#242522; --ring:rgba(255,255,255,.10);
-    --brand:#3ea877; --brand-ink:#5cc493; --brand-soft:#15251d;
-    --series:#3987e5; --series-soft:#153356;
-    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#e06060;
-    --lift:#3987e5; --drag:#e06060; --mid:#2a2b28;
+    --plane:#0e1218; --surface:#161b24; --surface-2:#1d232e;
+    --ink:#e8ecf3; --ink-2:#a3aec1; --muted:#727e93;
+    --line:#272f3d; --line-2:#222a36;
+    --brand:#5b8dff; --brand-ink:#a8c4ff; --brand-soft:#16213c;
+    --good:#3fbc86; --warning:#d9a441; --serious:#e08a5a; --critical:#ef6f6b;
+    --good-soft:#12281f;  --good-on:#3fbc86;
+    --warn-soft:#2b2313;  --warn-on:#d9a441;
+    --crit-soft:#2e1817;  --crit-on:#ef6f6b;
+    --info-soft:#16213c;  --info-on:#a8c4ff;
+    --mid:#2a3140;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
   }
 
@@ -76,7 +94,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .lock-link{all:unset;cursor:pointer;font-size:12px;color:var(--muted);text-decoration:underline}
   .lock-hash{font:11px/1.5 ui-monospace,Menlo,monospace;word-break:break-all;background:var(--surface-2);border-radius:8px;padding:8px 10px;margin-top:8px;color:var(--ink-2);min-height:15px;text-align:left}
   body{margin:0;background:var(--plane);color:var(--ink);
-    font:14px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font:14px/1.55 var(--ui);
     -webkit-font-smoothing:antialiased}
   .wrap{max-width:1360px;margin:0 auto;padding:22px 20px 96px}
   h1{font-size:19px;margin:0;letter-spacing:-.01em}
@@ -242,9 +260,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   .banner{border-radius:10px;padding:10px 14px;font-size:13px;margin-top:10px}
   .banner.ok{background:var(--brand-soft);color:var(--brand-ink)}
-  .banner.warn{background:#fdf3e2;color:#8a5a12} .banner.err{background:#fdecea;color:#b23b32}
-  :root[data-theme="dark"] .banner.warn,:root:where(:not([data-theme="light"])) .banner.warn{background:#2a2113;color:#f0c076}
-  :root[data-theme="dark"] .banner.err,:root:where(:not([data-theme="light"])) .banner.err{background:#2c1614;color:#f0a59c}
+  .banner.warn{background:var(--warn-soft);color:var(--warn-on)}
+  .banner.err{background:var(--crit-soft);color:var(--crit-on)}
   .spin{display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .ai-box{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:8px}
@@ -1150,11 +1167,19 @@ const money=v=>{v=+v||0;const a=Math.abs(v);if(a>=1e8)return (v/1e8).toFixed(2)+
 let REPORT_SHEETS=[], REPORT_CONCL=[], AISHEET=null;
 
 /* ---- 主题切换 ---- */
-$$(".theme button").forEach(b=>b.addEventListener("click",()=>{
-  const m=b.dataset.themeSet;
+/* 和工作台外壳、转化率工具共用一个 key。
+   以前这里根本不存 —— 选完深色一刷新就回去了，在外壳的 iframe 里还会和外壳打架。 */
+const THEME_KEY="wb_theme";
+function applyTheme(m){
   if(m==="auto") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme",m);
-  $$(".theme button").forEach(x=>x.setAttribute("aria-pressed", x===b));
+  $$(".theme button").forEach(x=>x.setAttribute("aria-pressed", String(x.dataset.themeSet===m)));
+}
+applyTheme(localStorage.getItem(THEME_KEY) || "auto");
+$$(".theme button").forEach(b=>b.addEventListener("click",()=>{
+  const m=b.dataset.themeSet;
+  try{ localStorage.setItem(THEME_KEY,m); }catch(e){}
+  applyTheme(m);
   if(state.clean) recompute();
 }));
 

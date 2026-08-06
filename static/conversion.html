@@ -31,42 +31,60 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   /* ---- design tokens (light) ---- */
   :root{
     color-scheme:light;
-    --plane:#f7f8f6; --surface:#ffffff; --surface-2:#fbfcfb;
-    --ink:#141613; --ink-2:#53564e; --muted:#8a8d83;
-    --line:#e5e7e0; --line-2:#eef0ea; --ring:rgba(20,22,19,.08);
-    --brand:#1f7a4d; --brand-ink:#12603b; --brand-soft:#e8f4ec;
-    --series:#2a78d6; --series-soft:#cde2fb;
-    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
-    --lift:#2a78d6; --drag:#d03b3b; --mid:#eceef0;
-    --shadow:0 1px 2px rgba(20,22,19,.04),0 4px 16px rgba(20,22,19,.05);
+    --plane:#fafbfd; --surface:#ffffff; --surface-2:#f4f6fa;
+    --ink:#12161f; --ink-2:#455065; --muted:#7a8699;
+    --line:#e3e8f0; --line-2:#eef1f6;
+    /* 品牌色只给主操作和激活态。以前是绿的（#1f7a4d），和语义色 --good 撞成一族 ——
+       这两个页面全靠语义色传严重度，品牌和「好」看起来是一回事就会读错。
+       换成工作台外壳那支蓝，顺带解决工具是在外壳 iframe 里打开、点进去从蓝跳绿。 */
+    --brand:#1664ff; --brand-ink:#0b47b8; --brand-soft:#eaf1ff;
+    /* 语义色：独立于品牌色，四档递进 */
+    --good:#0f9d63; --warning:#b7791f; --serious:#c9622f; --critical:#d64541;
+    /* 语义底色 + 其上的文字色。以前这些是散在各条规则里的硬编码，
+       深色还要再写一遍覆盖 —— 收进 token 后组件只写一次。 */
+    --good-soft:#e6f5ee;  --good-on:#0b6b45;
+    --warn-soft:#fdf4e3;  --warn-on:#8a5a10;
+    --crit-soft:#fdedec;  --crit-on:#a32f2b;
+    --info-soft:#eaf1ff;  --info-on:#0b47b8;
+    --mid:#eceef2;
+    --shadow:0 1px 2px rgba(18,22,31,.04),0 4px 16px rgba(18,22,31,.05);
+    /* 字体不随主题变，只在浅色块里定义一次，深色块会继承 */
+    --ui:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   }
   @media (prefers-color-scheme:dark){ :root:where(:not([data-theme="light"])){
     color-scheme:dark;
-    --plane:#0d0d0c; --surface:#181917; --surface-2:#1f201d;
-    --ink:#f4f5ef; --ink-2:#c3c5ba; --muted:#8f9187;
-    --line:#2b2c28; --line-2:#242522; --ring:rgba(255,255,255,.10);
-    --brand:#3ea877; --brand-ink:#5cc493; --brand-soft:#15251d;
-    --series:#3987e5; --series-soft:#153356;
-    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#e06060;
-    --lift:#3987e5; --drag:#e06060; --mid:#2a2b28;
+    --plane:#0e1218; --surface:#161b24; --surface-2:#1d232e;
+    --ink:#e8ecf3; --ink-2:#a3aec1; --muted:#727e93;
+    --line:#272f3d; --line-2:#222a36;
+    --brand:#5b8dff; --brand-ink:#a8c4ff; --brand-soft:#16213c;
+    --good:#3fbc86; --warning:#d9a441; --serious:#e08a5a; --critical:#ef6f6b;
+    --good-soft:#12281f;  --good-on:#3fbc86;
+    --warn-soft:#2b2313;  --warn-on:#d9a441;
+    --crit-soft:#2e1817;  --crit-on:#ef6f6b;
+    --info-soft:#16213c;  --info-on:#a8c4ff;
+    --mid:#2a3140;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
   }}
   :root[data-theme="dark"]{
     color-scheme:dark;
-    --plane:#0d0d0c; --surface:#181917; --surface-2:#1f201d;
-    --ink:#f4f5ef; --ink-2:#c3c5ba; --muted:#8f9187;
-    --line:#2b2c28; --line-2:#242522; --ring:rgba(255,255,255,.10);
-    --brand:#3ea877; --brand-ink:#5cc493; --brand-soft:#15251d;
-    --series:#3987e5; --series-soft:#153356;
-    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#e06060;
-    --lift:#3987e5; --drag:#e06060; --mid:#2a2b28;
+    --plane:#0e1218; --surface:#161b24; --surface-2:#1d232e;
+    --ink:#e8ecf3; --ink-2:#a3aec1; --muted:#727e93;
+    --line:#272f3d; --line-2:#222a36;
+    --brand:#5b8dff; --brand-ink:#a8c4ff; --brand-soft:#16213c;
+    --good:#3fbc86; --warning:#d9a441; --serious:#e08a5a; --critical:#ef6f6b;
+    --good-soft:#12281f;  --good-on:#3fbc86;
+    --warn-soft:#2b2313;  --warn-on:#d9a441;
+    --crit-soft:#2e1817;  --crit-on:#ef6f6b;
+    --info-soft:#16213c;  --info-on:#a8c4ff;
+    --mid:#2a3140;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
   }
 
   *{box-sizing:border-box}
   [hidden]{display:none!important}
   body{margin:0;background:var(--plane);color:var(--ink);
-    font:14px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font:14px/1.55 var(--ui);
     -webkit-font-smoothing:antialiased}
   .wrap{max-width:1360px;margin:0 auto;padding:18px 20px 96px}
   h1{font-size:19px;margin:0;letter-spacing:-.01em}
@@ -156,29 +174,42 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .tm-head{font-size:14px;font-weight:700;margin:0 0 10px;display:flex;align-items:baseline;gap:8px}
   .tm-head .cnt{font-size:12px;font-weight:400;color:var(--muted)}
   .tm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:10px;margin-bottom:16px}
-  .tm{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--critical);
+  /* 严重度靠 data-sev 分档，不再是六张一律红。--sev 由下面各档赋值，
+     左边框、序号徽标、影响数字、量级条统统引用它，改一处就全跟着走。 */
+  .tm{--sev:var(--muted);
+    background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--sev);
     border-radius:11px;padding:11px 13px;box-shadow:var(--shadow);cursor:pointer;text-align:left;
     display:flex;flex-direction:column;gap:5px;font:inherit;width:100%}
-  .tm:hover{border-color:var(--critical)}
+  .tm[data-sev="crit"]{--sev:var(--critical)}
+  .tm[data-sev="serious"]{--sev:var(--serious)}
+  .tm[data-sev="warn"]{--sev:var(--warning)}
+  .tm[data-sev="low"]{--sev:var(--muted)}
+  .tm:hover{border-color:var(--sev)}
   .tm:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
-  .tm .rk{font-size:10.5px;font-weight:700;color:#fff;background:var(--critical);border-radius:999px;
+  .tm .rk{font-size:10.5px;font-weight:700;color:#fff;background:var(--sev);border-radius:999px;
     width:17px;height:17px;line-height:17px;text-align:center;flex:none}
-  .tm .nm{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:7px}
+  .tm .nm{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:7px;min-width:0}
+  /* 商户名是打码的（FE****…），一串星号没有信息量却最宽最重 —— 截断，别让它抢主角 */
+  .tm .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .tm .meta{font-size:11.5px;color:var(--muted)}
-  .tm .imp{font-size:17px;font-weight:700;color:var(--critical);font-variant-numeric:tabular-nums}
+  .tm .meta .mid{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  /* 影响数字才是这张卡的主角 */
+  .tm .imp{font-size:22px;font-weight:700;color:var(--sev);
+    font-family:var(--mono);font-variant-numeric:tabular-nums;line-height:1.1}
+  .tm .imp small{font-size:11px;font-weight:600;font-family:var(--ui);color:var(--muted);margin-left:3px}
+  /* 长度按本组最大值归一化 —— 不读数字也能看出彼此差多远 */
+  .tm-bar{height:4px;border-radius:999px;background:var(--mid);overflow:hidden}
+  .tm-bar i{display:block;height:100%;border-radius:999px;background:var(--sev)}
   .tm .why{font-size:11.5px;color:var(--ink-2);line-height:1.5}
   .hl{animation:hlFlash 1.6s ease-out}
   @keyframes hlFlash{0%,30%{background:color-mix(in srgb,var(--warning) 26%,transparent)}100%{background:transparent}}
   @media (prefers-reduced-motion:reduce){.hl{animation:none;outline:2px solid var(--warning)}}
 
   .role{font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 6px;white-space:nowrap}
-  .role.根因{background:#fdecea;color:#b23b32}
+  .role.根因{background:var(--crit-soft);color:var(--crit-on)}
   .role.已解释{background:var(--surface-2);color:var(--muted)}
-  .role.未解释{background:#fdf3e2;color:#8a5a12}
-  .role.局部{background:var(--series-soft);color:#1c5a9e}
-  :root[data-theme="dark"] .role.根因,:root:where(:not([data-theme="light"])) .role.根因{background:#2c1614;color:#f0a59c}
-  :root[data-theme="dark"] .role.未解释,:root:where(:not([data-theme="light"])) .role.未解释{background:#2a2113;color:#f0c076}
-  :root[data-theme="dark"] .role.局部,:root:where(:not([data-theme="light"])) .role.局部{background:#153356;color:#9cc7f5}
+  .role.未解释{background:var(--warn-soft);color:var(--warn-on)}
+  .role.局部{background:var(--info-soft);color:var(--info-on)}
 
   .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
   .card.pad{padding:16px 18px}
@@ -194,6 +225,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   /* control bar */
   .controls{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--surface) 92%,transparent);
     backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:14px;padding:12px 16px;margin-bottom:14px}
+  .controls>summary{cursor:pointer;font-size:12px;color:var(--ink-2);padding:2px 0;
+    list-style:none;display:flex;align-items:center;gap:8px;user-select:none}
+  .controls>summary::-webkit-details-marker{display:none}
+  .controls>summary::before{content:'▸';color:var(--muted);font-size:10px;transition:transform .15s}
+  .controls[open]>summary::before{transform:rotate(90deg)}
+  .controls>summary .cur{font-family:var(--mono);font-variant-numeric:tabular-nums;
+    color:var(--muted);font-size:11.5px}
+  .controls[open] .ctl-row{margin-top:12px}
   .ctl-row{display:flex;gap:16px 20px;align-items:flex-end;flex-wrap:wrap}
   .field{display:flex;flex-direction:column;gap:5px}
   .field>span{font-size:11px;color:var(--muted);letter-spacing:.02em}
@@ -215,8 +254,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   /* anomaly blocks */
   .banner{border-radius:12px;padding:14px 16px;font-size:13.5px;display:flex;align-items:center;gap:10px}
   .banner.ok{background:var(--brand-soft);color:var(--brand-ink)}
-  .banner.warn{background:#fdf3e2;color:#8a5a12}
-  :root[data-theme="dark"] .banner.warn,:root:where(:not([data-theme="light"])) .banner.warn{background:#2a2113;color:#f0c076}
+  .banner.warn{background:var(--warn-soft);color:var(--warn-on)}
 
   .sec-title{font-size:14px;font-weight:700;margin:20px 0 10px;display:flex;align-items:center;gap:8px}
   .sec-title .cnt{font-size:12px;font-weight:400;color:var(--muted)}
@@ -228,7 +266,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .metric-head{font-size:13px;font-weight:600;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
   .metric-head .mv{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:500;font-size:12.5px}
   .pill{display:inline-block;font-size:11.5px;font-weight:700;color:#fff;border-radius:7px;padding:2px 8px}
-  .pill.drop{background:var(--critical)} .pill.rise{background:var(--serious)}
+  /* 涨 = 好，用 --good。以前 rise 是 --serious（橙），把「这个环节在拉升」
+     显示成一条警告，和下面表格里 +0.289% 的绿色也自相矛盾。 */
+  .pill.drop{background:var(--critical)} .pill.rise{background:var(--good)}
   .tag-warn{font-size:11px;font-weight:600;color:var(--critical);border:1px solid var(--critical);border-radius:6px;padding:1px 6px}
 
   .tbl-scroll{overflow-x:auto}
@@ -237,10 +277,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   table.dtl th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.02em}
   table.dtl td:first-child,table.dtl th:first-child,
   table.dtl td.l,table.dtl th.l{text-align:left}
+  /* 影响列的颜色按**整表是拉升还是拖累**定，不按每行数字的正负号。
+     符号和好坏不是一回事：摩擦类指标（3DS交易占比之类）跌了才是好事，
+     那种行的「影响比率」是负数却是正向贡献。而下钻本来就按方向筛过行了，
+     所以整表同色才是对的 —— 以前 .pos 一律染成 --serious（橙），
+     等于把「这个商户帮上忙了」显示成一条警告。 */
   table.dtl td.imp{font-weight:700}
-  table.dtl td.imp.neg{color:var(--critical)} table.dtl td.imp.pos{color:var(--serious)}
-  table.dtl .bx{position:relative;min-width:70px}
-  table.dtl .bx i{position:absolute;right:0;top:50%;transform:translateY(-50%);height:60%;border-radius:3px;background:var(--series-soft);z-index:0}
+  table.dtl.down td.imp{color:var(--critical)}
+  table.dtl.up   td.imp{color:var(--good)}
+  table.dtl .bx{position:relative;min-width:78px}
+  table.dtl .bx i{position:absolute;right:0;top:50%;transform:translateY(-50%);height:62%;
+    border-radius:3px;z-index:0;background:var(--mid)}
+  table.dtl.down .bx i{background:var(--crit-soft)}
+  table.dtl.up   .bx i{background:var(--good-soft)}
   table.dtl .bx span{position:relative;z-index:1}
   .empty{color:var(--muted);font-size:12.5px;padding:22px 8px;text-align:center}
 
@@ -294,8 +343,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .cfg-grid label input{width:100%}
   label.chk{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--ink-2)}
   label.chk input{width:16px;height:16px;accent-color:var(--brand)}
-  .privacy{font-size:12px;border-radius:9px;padding:9px 13px;background:#fdf3e2;color:#8a5a12;margin-bottom:14px;line-height:1.55}
-  :root[data-theme="dark"] .privacy,:root:where(:not([data-theme="light"])) .privacy{background:#2a2113;color:#f0c076}
+  .privacy{font-size:12px;border-radius:9px;padding:9px 13px;background:var(--warn-soft);color:var(--warn-on);margin-bottom:14px;line-height:1.55}
   .autosync{border:1px solid color-mix(in srgb,var(--brand) 30%,transparent);background:var(--brand-soft);
     border-radius:10px;padding:11px 14px;margin-bottom:14px;display:flex;flex-direction:column;gap:6px}
   .autosync .hint{color:var(--brand-ink);opacity:.85;line-height:1.55}
@@ -306,7 +354,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .bl-band{font-variant-numeric:tabular-nums}
   .bl-old{color:var(--muted)}
   .bl-rec{font-weight:700}
-  .bl-rec.drop{color:var(--critical)} .bl-rec.rise{color:var(--serious)}
+  .bl-rec.drop{color:var(--critical)} .bl-rec.rise{color:var(--good)}
   tr.bl-insuf td{color:var(--muted);font-style:italic}
 </style>
 
@@ -367,16 +415,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   <!-- results：可见性由各 panel 自己控制，故此容器不再整体隐藏 -->
   <div id="app">
     <!-- controls（探测阈值，跨面板共用） -->
-    <div class="controls" id="ctlBar" hidden>
+    <!-- 阈值是个几乎不动的设置项，以前却占着页面最顶上的黄金位置。
+         收进 details 默认折起，摘要上直接写当前值，不用展开也知道现在按什么在判。 -->
+    <details class="controls" id="ctlBar" hidden>
+      <summary>探测阈值 <span class="cur" id="thCur">-5 / -3 / -2 / +2</span></summary>
       <div class="ctl-row">
         <label class="field"><span>大环节阈值 (≤)</span><input type="number" id="thMain" step="0.5" value="-5"><span class="hint">%，默认 -5</span></label>
         <label class="field"><span>子环节阈值 (≤)</span><input type="number" id="thSub" step="0.5" value="-3"><span class="hint">%，默认 -3</span></label>
         <label class="field"><span>孙环节阈值 (≤)</span><input type="number" id="thLeaf" step="0.5" value="-2"><span class="hint">%，默认 -2</span></label>
         <label class="field"><span>摩擦类阈值 (≥)</span><input type="number" id="thFric" step="0.5" value="2"><span class="hint">%，默认 +2</span></label>
-        <button class="btn" id="recalc">重新探测</button>
+        <button class="btn primary" id="recalc">重新探测</button>
         <span class="hint" style="align-self:center">仅在该指标无足够历史样本时启用；有基准线时以基准线为准。</span>
       </div>
-    </div>
+    </details>
 
     <!-- ========== 面板：概览 ========== -->
     <div class="panel" id="p-overview" hidden>
@@ -560,7 +611,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
 /* ---------- 主题切换 ---------- */
 (function(){
-  const KEY="crm_theme";
+  // 和工作台外壳共用一个 key。以前工具页存 crm_theme、外壳存 wb_theme，
+  // 工具是在外壳的 iframe 里开的，两边各存各的就会打架（外壳深色、工具浅色）。
+  const KEY="wb_theme", OLD="crm_theme";
   const root=document.documentElement;
   function apply(m){
     if(m==="auto"){root.removeAttribute("data-theme");}
@@ -568,7 +621,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     document.querySelectorAll(".theme button").forEach(b=>
       b.setAttribute("aria-pressed", b.dataset.themeSet===m ? "true":"false"));
   }
-  let cur=localStorage.getItem(KEY)||"auto"; apply(cur);
+  // 迁移旧值，别把用户已经选好的主题重置成 auto
+  let cur=localStorage.getItem(KEY);
+  if(!cur){
+    const old=localStorage.getItem(OLD);
+    if(old){ cur=old; try{ localStorage.setItem(KEY,old); localStorage.removeItem(OLD); }catch(e){} }
+  }
+  cur=cur||"auto"; apply(cur);
   document.querySelectorAll(".theme button").forEach(b=>b.addEventListener("click",()=>{
     cur=b.dataset.themeSet; localStorage.setItem(KEY,cur); apply(cur);
   }));
@@ -1696,14 +1755,19 @@ function renderBlocks(drill, alarms, hasSite){
 function renderSourceStory(story){
   if(!story || !story.length) return '';
 
-  const table=(rows)=>`<div class="tbl-scroll"><table class="dtl">
+  const table=(rows, up)=>{
+    const shown = rows.slice(0,20);
+    // 条长按**本表内**最大绝对影响归一化。必须同一个基准，
+    // 每行各自为政的话条形本身就是错的信息。
+    const mx = Math.max(...shown.map(r=>Math.abs(parseFloat(String(r['影响比率']).replace('%',''))||0)), 0) || 1;
+    return `<div class="tbl-scroll"><table class="dtl ${up?'up':'down'}">
       <thead><tr>
         <th class="l">商户 / ID</th><th class="l">站点</th>
         <th>本期PO</th><th>进入本环节</th><th>通过本环节</th><th>比率(上期→本期)</th><th>环比变动</th><th>对本环节影响</th>
       </tr></thead><tbody>${
-        rows.slice(0,20).map(r=>{
-          const impCls = r['影响比率'].startsWith('-')?'neg':'pos';
+        shown.map(r=>{
           const flag = r['是否>PO']==='是' ? ' <span class="tag-warn" title="该环节含退款/重试">&gt;PO</span>' : '';
+          const w = (Math.abs(parseFloat(String(r['影响比率']).replace('%',''))||0)/mx*100).toFixed(1);
           return `<tr>
             <td class="l">${esc(r['商户名称'])} <span class="hint">${esc(r['用户ID'])}</span></td>
             <td class="l">${esc(r['站点'])}</td>
@@ -1712,12 +1776,13 @@ function renderSourceStory(story){
             <td>${r['通过本环节(单)']==null?'—':r['通过本环节(单)'].toLocaleString()}</td>
             <td>${esc(r['上期比率'])} → ${esc(r['本期比率'])}</td>
             <td>${esc(r['比率环比变动'])}</td>
-            <td class="imp ${impCls}">${esc(r['影响比率'])}</td>
+            <td class="imp bx"><i style="width:${w}%"></i><span>${esc(r['影响比率'])}</span></td>
           </tr>`;
         }).join('')
       }</tbody></table></div>${
         rows.length>20 ? `<div class="hint" style="margin-top:6px">仅显示影响最大的 20 个，共 ${rows.length} 个</div>` : ''
       }`;
+  };
 
   const sideBlock=(side, up)=>{
     if(!side) return '';
@@ -1736,7 +1801,7 @@ function renderSourceStory(story){
         <span class="hint">${st.contrib<0?'拉低':'拉动'}该来源整体 ${ptFmt(st.contrib)}</span>
       </div>
       ${chain}
-      ${side.rows.length ? table(side.rows) : `<div class="empty">${esc(side.reason||'无可下钻的商户')}</div>`}
+      ${side.rows.length ? table(side.rows, up) : `<div class="empty">${esc(side.reason||'无可下钻的商户')}</div>`}
     </div>`;
   };
 
@@ -1770,18 +1835,47 @@ function topMerchants(drillTotal, drillSite, limit){
   return [...agg.values()].sort((x,y)=>y.imp-x.imp).slice(0,limit||6);
 }
 
+/**
+ * 卡片的严重度分档。
+ *
+ * 纯绝对阈值不行：不同日子的量级差太远。08-02 那天最大 4.2%，08-03 那天最大 31%。
+ * 定死「≥2% 算严重」的话，平日勉强能用，遇上 08-03 就是六张里五张标红 ——
+ * 又回到「全是红字、看不出轻重」那个老问题。
+ *
+ * 纯相对也不行：风平浪静的一天，最大的那个哪怕只有 0.1%，也会被染成最红。
+ *
+ * 所以两者都要：**档位按占当天最大值的比例分**，再用绝对值封顶 ——
+ * 当天最严重的也不过 1%，那整组最多只到 warn，谁也别想标红。
+ */
+function sevOf(imp, max){
+  if(imp < 0.3) return 'low';                 // 绝对值太小，排第几都不值得着色
+  const r = imp / max;
+  const tier = r>=0.6 ? 3 : r>=0.3 ? 2 : r>=0.1 ? 1 : 0;
+  const cap  = max>=2 ? 3 : max>=1 ? 2 : 1;   // 当天整体不严重时的封顶
+  return ['low','warn','serious','crit'][Math.min(tier, cap)];
+}
+
 function renderTopMerchants(){
   const d=state.data;
   const list=topMerchants(d.drillTotal,d.drillSite,6);
   const host=$('#topMerchants');
   if(!list.length){ host.innerHTML=''; return; }
+  // 卡片已经按影响排好序了，但以前六张长得一模一样 —— 全是同样大小的红字，
+  // 4.2% 和 0.32% 差 13 倍在视觉上没有任何区别，等于排序信息没进到形式里。
+  // 这里用两种编码各做各的事：
+  //   颜色按**绝对**严重度分档 —— 0.32% 不该染成和 4.2% 一样的红
+  //   长条按**相对**最大值 —— 一眼看出彼此差多远
+  const max=Math.max(...list.map(m=>m.imp), 0) || 1;
   const cards=list.map((m,i)=>{
     const top=[...m.metrics.entries()].sort((a,b)=>b[1]-a[1]).slice(0,2)
       .map(([k])=>esc(k)).join('、');
-    return `<button class="tm" data-mid="${esc(m.key)}" title="点击定位到该商户的异常明细">
-      <div class="nm"><span class="rk">${i+1}</span>${esc(m.商户名称)}</div>
-      <div class="meta">${esc(m.来源)} · ID ${esc(m.用户ID)} · 本期PO ${Number(m.po).toLocaleString()}</div>
-      <div class="imp">累计影响 ${m.imp.toFixed(3)}%</div>
+    const sev = sevOf(m.imp, max);
+    const w = Math.max(2, m.imp/max*100).toFixed(1);
+    return `<button class="tm" data-sev="${sev}" data-mid="${esc(m.key)}" title="点击定位到该商户的异常明细">
+      <div class="nm"><span class="rk">${i+1}</span><span class="who">${esc(m.商户名称)}</span></div>
+      <div class="imp">${m.imp.toFixed(2)}%<small>累计影响</small></div>
+      <div class="tm-bar"><i style="width:${w}%"></i></div>
+      <div class="meta">${esc(m.来源)} · PO ${Number(m.po).toLocaleString()} · <span class="mid">${esc(m.用户ID)}</span></div>
       <div class="why">主要来自：${top}</div>
     </button>`;
   }).join('');
@@ -2103,8 +2197,20 @@ $('#recalc').addEventListener('click', ()=>{
   const nv=(sel,def)=>{ const v=parseFloat($(sel).value); return Number.isFinite(v)?v/100:def; };
   LEVEL_THRESHOLDS={ 0:nv('#thMain',-0.05), 1:nv('#thSub',-0.03), 2:nv('#thLeaf',-0.02),
                      friction_rise:nv('#thFric',0.02) };
+  syncThCur();
   run();
 });
+
+/** 折起时也要能一眼看到现在按什么阈值在判。 */
+function syncThCur(){
+  const el=$('#thCur'); if(!el) return;
+  const v=id=>$(id) ? $(id).value : '';
+  el.textContent = `${v('#thMain')} / ${v('#thSub')} / ${v('#thLeaf')} / ${v('#thFric')>=0?'+':''}${v('#thFric')}`;
+}
+['#thMain','#thSub','#thLeaf','#thFric'].forEach(id=>{
+  const el=$(id); if(el) el.addEventListener('input', syncThCur);
+});
+syncThCur();
 
 $('#bcTabs').addEventListener('click', e=>{
   const b=e.target.closest('.tab'); if(!b) return;
