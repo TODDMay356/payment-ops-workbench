@@ -26,6 +26,9 @@
     --shadow:0 1px 2px rgba(18,22,31,.04), 0 6px 20px rgba(18,22,31,.05);
     --ui:"PingFang SC","Microsoft YaHei","Hiragino Sans GB",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    /* 只有时长和缓动，没有属性名 —— 所以必须写成 `transition:<属性> var(--t)`，
+       一个属性一段。写成 `transition:var(--t)` 会让 transition-property 落回 all，
+       浏览器得盯着每个属性看，还会顺带动到没打算动的东西（padding、颜色、阴影）。 */
     --t:140ms cubic-bezier(.4,0,.2,1);
   }
   @media (prefers-color-scheme:dark){
@@ -99,11 +102,13 @@
     width:40px; height:40px; border:0; background:none; cursor:pointer;
     border-radius:var(--r-m); color:var(--ink-3); font-size:17px;
     display:flex; align-items:center; justify-content:center;
-    position:relative; transition:var(--t);
+    position:relative;
+    transition:background-color var(--t), color var(--t), scale var(--t);
   }
   .rail button svg{width:19px; height:19px; fill:none; stroke:currentColor;
                    stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round}
   .rail button:hover{background:var(--surface-2); color:var(--ink)}
+  .rail button:active{scale:.96}
   .rail button[aria-current="true"]{background:var(--accent-wash); color:var(--accent)}
   .rail button[aria-current="true"]::before{
     content:''; position:absolute; left:-8px; top:9px; bottom:9px;
@@ -113,7 +118,8 @@
   .rail .tip{
     position:absolute; left:52px; white-space:nowrap; background:var(--ink); color:var(--paper);
     font-size:12px; padding:4px 9px; border-radius:var(--r-s); pointer-events:none;
-    opacity:0; transform:translateX(-4px); transition:var(--t); z-index:50;
+    opacity:0; transform:translateX(-4px); z-index:50;
+    transition:opacity var(--t), transform var(--t);
   }
   .rail button:hover .tip{opacity:1; transform:translateX(0)}
 
@@ -125,7 +131,7 @@
 
   .head{display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap}
   .head h1{font-size:19px; font-weight:700; letter-spacing:-.01em; text-wrap:balance}
-  .head .sub{font-size:12.5px; color:var(--ink-3); margin-top:1px}
+  .head .sub{font-size:12.5px; color:var(--ink-3); margin-top:1px; text-wrap:pretty}
   .head .now{font-size:12px; color:var(--ink-3); text-align:right}
   .head .now b{display:block; font-size:19px; font-weight:600; color:var(--ink-2); line-height:1.15}
 
@@ -135,14 +141,16 @@
     display:flex; align-items:center; gap:10px; padding:10px 14px;
     cursor:pointer; width:100%; border:0; background:none; text-align:left;
     font-family:inherit; font-size:13px; color:var(--ink);
+    transition:background-color var(--t);
   }
+  /* 整条通栏的按钮，按下去缩放会很怪 —— 只给背景反馈，不给 scale */
   .sys-bar:hover{background:var(--surface-2)}
   .sys-bar .lamp{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex-shrink:0}
   .sys-bar .lamp.ok{background:var(--ok); box-shadow:0 0 0 3px var(--ok-wash)}
   .sys-bar .lamp.warn{background:var(--warn); box-shadow:0 0 0 3px var(--warn-wash)}
   .sys-bar .lamp.crit{background:var(--crit); box-shadow:0 0 0 3px var(--crit-wash)}
   .sys-bar .grow{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  .sys-bar .caret{color:var(--ink-3); font-size:11px; transition:var(--t)}
+  .sys-bar .caret{color:var(--ink-3); font-size:11px; transition:transform var(--t)}
   .sys[data-open="1"] .sys-bar .caret{transform:rotate(180deg)}
   .sys-detail{display:none; border-top:1px solid var(--line); padding:12px 14px;
     grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:10px}
@@ -169,8 +177,8 @@
   }
   .act-head .ico.amber{background:var(--warn-wash); color:var(--warn)}
   .act-head .t{flex:1; min-width:0}
-  .act-head .t h3{font-size:14.5px; font-weight:700}
-  .act-head .t p{font-size:12.5px; color:var(--ink-3); margin-top:1px}
+  .act-head .t h3{font-size:14.5px; font-weight:700; text-wrap:balance}
+  .act-head .t p{font-size:12.5px; color:var(--ink-3); margin-top:1px; text-wrap:pretty}
   .act-body{padding:0 18px 16px; display:flex; flex-direction:column; gap:12px}
 
   .tags{display:flex; gap:6px; flex-wrap:wrap}
@@ -184,7 +192,7 @@
              font-size:11.5px; color:var(--ink-3)}
   .inbox-bar .btn{padding:3px 0; font-size:11.5px}
   .note{font-size:12.5px; padding:9px 11px; border-radius:var(--r-s);
-        background:var(--surface-2); color:var(--ink-2); line-height:1.55}
+        background:var(--surface-2); color:var(--ink-2); line-height:1.55; text-wrap:pretty}
   .note.ok{background:var(--ok-wash); color:var(--ok)}
   .note.warn{background:var(--warn-wash); color:var(--warn)}
   .note b{font-variant-numeric:tabular-nums}
@@ -211,13 +219,16 @@
   .btn{
     font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
     border:1px solid var(--line-strong); background:var(--surface); color:var(--ink-2);
-    border-radius:var(--r-s); padding:7.5px 15px; transition:var(--t);
+    border-radius:var(--r-s); padding:7.5px 15px;
+    transition:background-color var(--t), border-color var(--t), color var(--t), scale var(--t);
     display:inline-flex; align-items:center; gap:6px; white-space:nowrap; text-decoration:none;
   }
   .btn:hover{border-color:var(--ink-3); color:var(--ink)}
   .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
   .btn.primary:hover{background:var(--accent-ink); border-color:var(--accent-ink)}
   .btn:disabled{opacity:.55; cursor:not-allowed}
+  /* 按下去回 0.96 —— 再小就夸张了。禁用态不给反馈，免得看起来像点动了 */
+  .btn:active:not(:disabled){scale:.96}
   .btn.quiet{border-color:transparent; background:none; color:var(--ink-3); padding-left:0}
   .btn.quiet:hover{color:var(--accent)}
 
@@ -244,7 +255,7 @@
   .feed li .kd{font-size:11px; font-weight:700; padding:1px 7px; border-radius:4px; flex-shrink:0}
   .feed li .kd.ok{background:var(--ok-wash); color:var(--ok)}
   .feed li .kd.err{background:var(--crit-wash); color:var(--crit)}
-  .feed li .dt{color:var(--ink-2); min-width:0; overflow-wrap:anywhere}
+  .feed li .dt{color:var(--ink-2); min-width:0; overflow-wrap:anywhere; text-wrap:pretty}
 
   .foot{display:flex; gap:14px; align-items:center; flex-wrap:wrap;
         font-size:12px; color:var(--ink-3); padding-top:2px}

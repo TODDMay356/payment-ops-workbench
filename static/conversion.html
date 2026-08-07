@@ -100,9 +100,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .brand .ver{font-size:11px;color:var(--muted);font-weight:500}
   .nav-spacer{flex:1}
   .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px}
-  .seg button{all:unset;cursor:pointer;font-size:12.5px;color:var(--ink-2);padding:5px 13px;border-radius:6px;white-space:nowrap}
+  /* transition 写在 all:unset 之后 —— unset 会把它一起清掉 */
+  .seg button{all:unset;cursor:pointer;font-size:12.5px;color:var(--ink-2);padding:5px 13px;border-radius:6px;white-space:nowrap;
+    transition:background-color 120ms ease-out,color 120ms ease-out,scale 150ms ease-out}
   .seg button[aria-pressed="true"]{background:var(--brand);color:#fff;font-weight:600}
   .seg button:disabled{opacity:.35;cursor:not-allowed}
+  .seg button:active:not(:disabled){scale:.96}
   .seg.sm button{font-size:12px;padding:4px 9px}
   .seg-lbl{font-size:11px;color:var(--muted);margin-right:-8px;white-space:nowrap}
   /* .chart-head 一直没有样式规则，标题和右侧计数直接贴在一起 */
@@ -119,16 +122,23 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .datesel .lnk:hover{text-decoration:underline}
   .datesel .lnk[disabled]{opacity:.35;cursor:default;text-decoration:none}
   .theme{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:3px}
-  .theme button{all:unset;cursor:pointer;font-size:12px;color:var(--ink-2);padding:4px 9px;border-radius:6px}
+  /* 视觉高度约 25px，够不到密集桌面 40px 的下限。左右两颗在同一段里紧挨着，
+     只能纵向撑：伪元素补到 40px 高。.theme 上下没有别的可点元素，不会撞热区。 */
+  .theme button{all:unset;cursor:pointer;font-size:12px;color:var(--ink-2);padding:4px 9px;border-radius:6px;position:relative;
+    transition:background-color 120ms ease-out,color 120ms ease-out,scale 150ms ease-out}
+  .theme button::after{content:"";position:absolute;left:0;right:0;top:50%;height:40px;transform:translateY(-50%)}
   .theme button[aria-pressed="true"]{background:var(--brand-soft);color:var(--brand-ink);font-weight:600}
+  .theme button:active{scale:.96}
 
   .nav-tabs{max-width:1360px;margin:0 auto;padding:0 20px;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
   .nav-tabs::-webkit-scrollbar{display:none}
   .nav-tabs button{all:unset;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);
-    padding:9px 14px;border-bottom:2px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:6px}
+    padding:9px 14px;border-bottom:2px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:6px;
+    transition:color 120ms ease-out,border-color 120ms ease-out,scale 150ms ease-out}
   .nav-tabs button:hover{color:var(--ink-2)}
   .nav-tabs button[aria-selected="true"]{color:var(--brand-ink);border-bottom-color:var(--brand)}
   .nav-tabs button:disabled{opacity:.35;cursor:not-allowed}
+  .nav-tabs button:active:not(:disabled){scale:.96}
   .nav-tabs .badge{font-size:10.5px;font-weight:700;background:var(--critical);color:#fff;border-radius:999px;padding:0 6px;line-height:16px;min-width:16px;text-align:center}
   .nav-tabs button[aria-selected="true"] .badge{background:var(--critical)}
   .panel[hidden]{display:none!important}
@@ -139,8 +149,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .prio.ok{border-left-color:var(--good)}
   .prio.warn{border-left-color:var(--warning)}
   .prio .lead{font-size:11.5px;color:var(--muted);letter-spacing:.03em;text-transform:uppercase;margin-bottom:4px}
-  .prio .big{font-size:15.5px;font-weight:700;line-height:1.4}
-  .prio .why{font-size:12.5px;color:var(--ink-2);margin-top:6px;line-height:1.65}
+  .prio .big{font-size:15.5px;font-weight:700;line-height:1.4;text-wrap:balance}
+  .prio .why{font-size:12.5px;color:var(--ink-2);margin-top:6px;line-height:1.65;text-wrap:pretty}
   .prio .why b{color:var(--ink)}
   .prio .tag{display:inline-block;font-size:11.5px;font-weight:700;color:#fff;background:var(--critical);border-radius:7px;padding:2px 9px;margin-left:4px}
 
@@ -176,15 +186,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .tm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:10px;margin-bottom:16px}
   /* 严重度靠 data-sev 分档，不再是六张一律红。--sev 由下面各档赋值，
      左边框、序号徽标、影响数字、量级条统统引用它，改一处就全跟着走。 */
+  /* 圆角 13px = 里面 .tm-bar 的等效圆角 2px（999px 的药丸，但只有 4px 高）+ 11px 内边距。
+     同心圆角：外圆角 = 内圆角 + padding，两层贴这么近的时候不算会显得内层被「掐」住。 */
   .tm{--sev:var(--muted);
     background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--sev);
-    border-radius:11px;padding:11px 13px;box-shadow:var(--shadow);cursor:pointer;text-align:left;
-    display:flex;flex-direction:column;gap:5px;font:inherit;width:100%}
+    border-radius:13px;padding:11px 13px;box-shadow:var(--shadow);cursor:pointer;text-align:left;
+    display:flex;flex-direction:column;gap:5px;font:inherit;width:100%;
+    transition:border-color 120ms ease-out,scale 150ms ease-out}
   .tm[data-sev="crit"]{--sev:var(--critical)}
   .tm[data-sev="serious"]{--sev:var(--serious)}
   .tm[data-sev="warn"]{--sev:var(--warning)}
   .tm[data-sev="low"]{--sev:var(--muted)}
   .tm:hover{border-color:var(--sev)}
+  .tm:active{scale:.96}
   .tm:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
   .tm .rk{font-size:10.5px;font-weight:700;color:#fff;background:var(--sev);border-radius:999px;
     width:17px;height:17px;line-height:17px;text-align:center;flex:none}
@@ -200,7 +214,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   /* 长度按本组最大值归一化 —— 不读数字也能看出彼此差多远 */
   .tm-bar{height:4px;border-radius:999px;background:var(--mid);overflow:hidden}
   .tm-bar i{display:block;height:100%;border-radius:999px;background:var(--sev)}
-  .tm .why{font-size:11.5px;color:var(--ink-2);line-height:1.5}
+  .tm .why{font-size:11.5px;color:var(--ink-2);line-height:1.5;text-wrap:pretty}
   .hl{animation:hlFlash 1.6s ease-out}
   @keyframes hlFlash{0%,30%{background:color-mix(in srgb,var(--warning) 26%,transparent)}100%{background:transparent}}
   @media (prefers-reduced-motion:reduce){.hl{animation:none;outline:2px solid var(--warning)}}
@@ -213,10 +227,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
   .card.pad{padding:16px 18px}
-  .card h2{font-size:13px;margin:0 0 12px;color:var(--ink-2);font-weight:600;letter-spacing:.02em;text-transform:uppercase}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--ink-2);font-weight:600;letter-spacing:.02em;text-transform:uppercase;text-wrap:balance}
   .stack{display:flex;flex-direction:column;gap:14px}
 
-  .hint{font-size:12px;color:var(--muted)}
+  .hint{font-size:12px;color:var(--muted);text-wrap:pretty}
   .up-cell{border:1px dashed var(--line);border-radius:11px;padding:16px 16px;background:var(--surface-2);display:flex;flex-direction:column;gap:9px}
   .up-t{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .up-tag{font-size:11px;font-weight:600;color:var(--brand-ink);background:var(--brand-soft);border-radius:999px;padding:2px 9px}
@@ -239,9 +253,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   input[type=number],select{height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;
     background:var(--surface);color:inherit;font:inherit;min-width:120px}
   input[type=number]{width:96px;min-width:0;font-variant-numeric:tabular-nums}
-  button.btn{height:34px;padding:0 15px;border:0;border-radius:8px;background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button.btn{height:34px;padding:0 15px;border:0;border-radius:8px;background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer;
+    transition:background-color 120ms ease-out,scale 150ms ease-out}
   button.btn.ghost{background:var(--surface);border:1px solid var(--line);color:var(--ink)}
   button.btn:disabled{opacity:.45;cursor:not-allowed}
+  button.btn:active:not(:disabled){scale:.96}
 
   /* KPI */
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px}
@@ -295,8 +311,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   /* broadcast */
   .tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
-  .tab{all:unset;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-2);padding:7px 14px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line)}
+  .tab{all:unset;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-2);padding:7px 14px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);
+    transition:background-color 120ms ease-out,color 120ms ease-out,border-color 120ms ease-out,scale 150ms ease-out}
   .tab.on{background:var(--brand-soft);color:var(--brand-ink);border-color:color-mix(in srgb,var(--brand) 25%,transparent)}
+  .tab:active{scale:.96}
   pre.out{white-space:pre-wrap;word-break:break-word;background:var(--surface-2);border:1px solid var(--line);
     border-radius:10px;padding:15px 17px;font:12.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;max-height:520px;overflow:auto}
   .row-btns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}

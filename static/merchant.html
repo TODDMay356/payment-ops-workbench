@@ -82,6 +82,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   *{box-sizing:border-box}
   [hidden]{display:none!important}
+  /* 另外两个界面都有这条，只有这个文件一直没有 —— 而它恰好有个无限转的 .spin。
+     关掉动效后 .spin 停成一个静态圆环，配合旁边的文案仍然说明「在跑」，
+     动效不做唯一的反馈通道。 */
+  @media (prefers-reduced-motion:reduce){ *{animation:none!important; transition:none!important} }
   /* 访问密码锁 */
   #lock{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:var(--plane);padding:20px}
   .lockbox{width:min(370px,92vw);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:30px 26px;display:flex;flex-direction:column;gap:11px;text-align:center}
@@ -97,23 +101,28 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     font:14px/1.55 var(--ui);
     -webkit-font-smoothing:antialiased}
   .wrap{max-width:1360px;margin:0 auto;padding:22px 20px 96px}
-  h1{font-size:19px;margin:0;letter-spacing:-.01em}
-  .sub{color:var(--ink-2);margin:4px 0 0;font-size:13px}
+  h1{font-size:19px;margin:0;letter-spacing:-.01em;text-wrap:balance}
+  .sub{color:var(--ink-2);margin:4px 0 0;font-size:13px;text-wrap:pretty}
   .tabnums{font-variant-numeric:tabular-nums}
 
   .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
   .theme{display:flex;gap:2px;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:3px}
-  .theme button{all:unset;cursor:pointer;font-size:12px;color:var(--ink-2);padding:4px 9px;border-radius:6px}
+  /* 视觉高度约 25px，够不到密集桌面 40px 的下限。左右两颗在同一段里紧挨着，
+     只能纵向撑：伪元素补到 40px 高。.theme 上下没有别的可点元素，不会撞热区。 */
+  .theme button{all:unset;cursor:pointer;font-size:12px;color:var(--ink-2);padding:4px 9px;border-radius:6px;position:relative;
+    transition:background-color 120ms ease-out,color 120ms ease-out,scale 150ms ease-out}
+  .theme button::after{content:"";position:absolute;left:0;right:0;top:50%;height:40px;transform:translateY(-50%)}
   .theme button[aria-pressed="true"]{background:var(--brand-soft);color:var(--brand-ink);font-weight:600}
+  .theme button:active{scale:.96}
 
   .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
   .card.pad{padding:16px 18px}
-  .card h2{font-size:13px;margin:0 0 12px;color:var(--ink-2);font-weight:600;letter-spacing:.02em;text-transform:uppercase}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--ink-2);font-weight:600;letter-spacing:.02em;text-transform:uppercase;text-wrap:balance}
   .stack{display:flex;flex-direction:column;gap:14px}
 
   .drop{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   .drop input[type=file]{font:inherit}
-  .hint{font-size:12px;color:var(--muted)}
+  .hint{font-size:12px;color:var(--muted);text-wrap:pretty}
   .up-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   @media(max-width:760px){.up-grid{grid-template-columns:1fr}}
   .up-cell{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--surface-2);display:flex;flex-direction:column;gap:8px}
@@ -126,9 +135,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     background:linear-gradient(0deg,var(--surface),var(--surface)) padding-box,var(--surface);
     border:1px solid var(--line);border-left:4px solid var(--critical)}
   .prio.ok{border-left-color:var(--good)}
-  .prio .big{font-size:15px;font-weight:700}
+  .prio .big{font-size:15px;font-weight:700;text-wrap:balance}
   .prio .lead{font-size:12px;color:var(--muted);margin-bottom:3px;letter-spacing:.02em}
-  .prio .why{font-size:12.5px;color:var(--ink-2);margin-top:4px;line-height:1.5}
+  .prio .why{font-size:12.5px;color:var(--ink-2);margin-top:4px;line-height:1.5;text-wrap:pretty}
   .prio .pill{display:inline-block;font-size:12px;font-weight:700;color:#fff;background:var(--critical);border-radius:7px;padding:2px 9px;margin-left:2px}
   .fstage{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .fstage>summary{cursor:pointer;list-style:none;padding:10px 13px;font-size:12.5px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
@@ -143,7 +152,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .field{display:flex;flex-direction:column;gap:5px}
   .field>span{font-size:11px;color:var(--muted);letter-spacing:.02em}
   .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:2px}
-  .seg label{cursor:pointer;font-size:12.5px;padding:5px 11px;border-radius:6px;color:var(--ink-2)}
+  .seg label{cursor:pointer;font-size:12.5px;padding:5px 11px;border-radius:6px;color:var(--ink-2);
+    transition:color 120ms ease-out,scale 150ms ease-out}
+  .seg label:active{scale:.96}
   .seg input{position:absolute;opacity:0;pointer-events:none}
   .seg input:checked+span{background:var(--brand);color:#fff;font-weight:600}
   .seg label span{display:block;padding:5px 11px;margin:-5px -11px;border-radius:6px}
@@ -151,21 +162,35 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     background:var(--surface);color:inherit;font:inherit;min-width:140px}
   .toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--ink-2);height:34px}
   .toggle input{width:0;height:0;opacity:0;position:absolute}
-  .switch{width:38px;height:22px;border-radius:11px;background:var(--line);position:relative;transition:.15s}
-  .switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  /* 原来这两条写的是 `transition:.15s` —— 简写里只给时长不给属性名，
+     transition-property 会落回 all，浏览器盯着每个属性看，还会动到没打算动的东西。
+     各自只声明真正会变的那一个属性。 */
+  .switch{width:38px;height:22px;border-radius:11px;background:var(--line);position:relative;
+    transition:background-color 150ms ease-out}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);
+    transition:transform 150ms ease-out}
   .toggle input:checked+.switch{background:var(--brand)}
   .toggle input:checked+.switch::after{transform:translateX(16px)}
-  button.btn{height:34px;padding:0 15px;border:0;border-radius:8px;background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button.btn{height:34px;padding:0 15px;border:0;border-radius:8px;background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer;
+    transition:background-color 120ms ease-out,scale 150ms ease-out}
   button.btn.ghost{background:var(--surface);border:1px solid var(--line);color:var(--ink)}
   button.btn:disabled{opacity:.45;cursor:not-allowed}
+  button.btn:active:not(:disabled){scale:.96}
 
   .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px;align-items:center}
   .chips:empty{display:none}
   .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:var(--brand-soft);color:var(--brand-ink);
     border:1px solid color-mix(in srgb,var(--brand) 25%,transparent);border-radius:999px;padding:3px 6px 3px 10px}
   .chip b{font-weight:600}
-  .chip button{all:unset;cursor:pointer;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;color:var(--brand-ink);opacity:.7}
+  /* 视觉还是 16×16，但热区靠伪元素撑到 24×24。
+     到不了密集桌面 40×40 的下限 —— .chips 的 gap 只有 8px，左右各只能吃 4px，
+     再大就和相邻 chip 的热区重叠了（两个可点元素的热区绝不能叠）。
+     真要 40 得先把 .chips 的 gap 提到 16px，那是布局改动，这轮不做。 */
+  .chip button{all:unset;cursor:pointer;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;color:var(--brand-ink);opacity:.7;position:relative;
+    transition:opacity 120ms ease-out,background-color 120ms ease-out,scale 150ms ease-out}
+  .chip button::after{content:"";position:absolute;top:50%;left:50%;width:24px;height:24px;transform:translate(-50%,-50%)}
   .chip button:hover{opacity:1;background:color-mix(in srgb,var(--brand) 18%,transparent)}
+  .chip button:active{scale:.96}
   .chips .clr{font-size:12px;color:var(--muted);cursor:pointer;text-decoration:underline;background:none;border:0}
 
   /* KPI */
@@ -183,14 +208,17 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .col-4{grid-column:span 4} .col-5{grid-column:span 5} .col-6{grid-column:span 6}
   .col-7{grid-column:span 7} .col-8{grid-column:span 8} .col-12{grid-column:span 12}
   @media(max-width:900px){.col-4,.col-5,.col-6,.col-7,.col-8{grid-column:span 12}}
-  .tabs{display:flex;gap:4px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:5px;box-shadow:var(--shadow)}
-  .tab{all:unset;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-2);padding:8px 15px;border-radius:8px;transition:background .12s}
+  /* 13px = 里面 .tab 的 8px + 5px 内边距。同心圆角，跟 .seg / .theme 一个算法。 */
+  .tabs{display:flex;gap:4px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:5px;box-shadow:var(--shadow)}
+  .tab{all:unset;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink-2);padding:8px 15px;border-radius:8px;
+    transition:background-color 120ms ease-out,color 120ms ease-out,scale 150ms ease-out}
   .tab:hover{background:var(--surface-2)}
+  .tab:active{scale:.96}
   .tab:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
   .tab.on{background:var(--brand-soft);color:var(--brand-ink)}
   .chart-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:0 0 10px}
   .chart-head select{height:26px}
-  .chart-head .t{font-size:13.5px;font-weight:600;color:var(--ink)}
+  .chart-head .t{font-size:13.5px;font-weight:600;color:var(--ink);text-wrap:balance}
   .chart-head .s{font-size:11.5px;color:var(--muted)}
   .chart-head select{height:26px;min-width:0;font-size:12px;padding:0 6px}
   svg .lab{fill:var(--ink-2);font-size:11px}
@@ -206,7 +234,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   /* HTML 横向条形列表（失败原因等长标签用，可换行、整行可点） */
   .hbars{display:flex;flex-direction:column;gap:3px}
   .hbar{all:unset;box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) 34% auto;gap:10px;align-items:center;
-    cursor:pointer;padding:7px 8px;border-radius:8px;width:100%}
+    cursor:pointer;padding:7px 8px;border-radius:8px;width:100%;
+    transition:background-color 120ms ease-out}
+  /* 通栏整行，按下去缩放会很怪 —— 只给背景反馈，不给 scale */
   .hbar:hover{background:var(--surface-2)}
   .hbar:focus-visible{outline:2px solid var(--series);outline-offset:1px}
   .hbar .lb{font-size:12.5px;color:var(--ink);line-height:1.35;word-break:break-word}
