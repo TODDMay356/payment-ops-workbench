@@ -46,6 +46,18 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     --crit-soft:#fdedec;  --crit-on:#a32f2b;
     --info-soft:#eaf1ff;  --info-on:#0b47b8;
     --mid:#eceef2;
+    /* ea8178a 换配色时把这四个 token 的定义从三个主题块里一起删了，引用一处没删 ——
+       `fill:var(--lift)` 里变量未定义会让整条声明失效，SVG fill 回落到初始值黑色，
+       于是影响力图整排条、图例色块、以及「≥整体」的柱子全成了黑的。
+       这里用现有语义 token 表达：自定义属性在**使用时**才求值，
+       所以深色块覆盖 --brand / --critical / --good 之后这四个会自动跟着变，
+       不必像原来那样在三个主题块里各写一遍。 */
+    --series:var(--brand); --series-soft:var(--brand-soft);
+    /* 红正绿负（红涨绿跌那套）：--lift 是「提高」，--drag 是「拖累」。
+       注意这和同页语义色是撞着的 —— --critical 红同时表示「严重/差」
+       （成功率低的 KPI 数字就是红的），--good 绿同时表示「好」。
+       这是明确要的读法，别顺手换回蓝红。 */
+    --lift:var(--critical);  --drag:var(--good);
     --shadow:0 1px 2px rgba(18,22,31,.04),0 4px 16px rgba(18,22,31,.05);
     /* 字体不随主题变，只在浅色块里定义一次，深色块会继承 */
     --ui:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
@@ -1510,14 +1522,15 @@ function recoverableCard(view){
   body.querySelectorAll(".hbar[data-reason]").forEach(b=>b.addEventListener("click",()=>openDrill(b.dataset.reason)));
 }
 
-/* 影响力排行（发散条形：正=拖累，负=拉升），整行可点=筛选 */
+/* 影响力排行（发散条形：正=提高，负=拖累），整行可点=筛选。
+   注释原来写反了（写成「正=拖累，负=拉升」），代码里一直是 lift = impact > 0。 */
 function impactCard(view,gmBin,gmAmt,gmMet,binAvail,span){
   let items=[];
   const push=(gm,col)=>{ if(!gm)return; gm.rows.forEach(r=>items.push({dim:DIM_LABEL[col],col,v:r.v,impact:r.impact,rate:r.rate,share:r.share,n:r.n,amt:r.amt})); };
   if(binAvail) push(gmBin,"bin_country");
   push(gmAmt,"amount_range"); push(gmMet,"payment_method");
   items=items.filter(x=>isFinite(x.impact)&&x.impact!==0).sort((a,b)=>Math.abs(b.impact)-Math.abs(a.impact)).slice(0,12);
-  const c=card(span||"col-6",`<div class="chart-head"><span class="t">各项对整体${isAmt()?'金额':''}成功率的影响力</span><span class="s">正=提高（蓝） · 负=拖累（红）</span></div>`);
+  const c=card(span||"col-6",`<div class="chart-head"><span class="t">各项对整体${isAmt()?'金额':''}成功率的影响力</span><span class="s">正=提高（红） · 负=拖累（绿）</span></div>`);
   const body=document.createElement("div"); c.appendChild(body);
   if(items.length===0){body.innerHTML='<div class="empty">无数据</div>';return;}
   const maxA=Math.max(...items.map(x=>Math.abs(x.impact)))||1;
