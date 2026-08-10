@@ -209,6 +209,15 @@
   .f input[type=file]{padding:5px 7px; cursor:pointer}
   .f input[type=date]{font-family:var(--mono); font-variant-numeric:tabular-nums}
   .f input:focus{border-color:var(--accent); background:var(--surface)}
+  /* 出单监控积压多天时那个日期下拉。跟 .f input 同一套，
+     否则浏览器默认样式的 select 挨着 .btn 会明显不是一家的 */
+  .note select{
+    font-family:var(--mono); font-size:12.5px; color:var(--ink);
+    font-variant-numeric:tabular-nums; cursor:pointer;
+    background:var(--surface); border:1px solid var(--line-strong);
+    border-radius:var(--r-s); padding:7px 9px; min-width:0;
+  }
+  .note select:focus{border-color:var(--accent)}
   .f input::file-selector-button{
     font-family:inherit; font-size:11.5px; border:1px solid var(--line-strong);
     background:var(--surface); color:var(--ink-2); border-radius:5px;
@@ -809,40 +818,105 @@ async function refreshInbox(){
     }
   }
 
-  /* 出单监控：文件已经备好，跑不跑由人点 —— 那一下会往群里发通知、给 BD 发私聊 */
+  /* 出单监控：文件已经备好，跑不跑由人点 —— 那一下会往群里发通知、给 BD 发私聊。
+     一次可能积压好几天：周一回来手上是周六 + 周日两份，得**从早到晚**一天一天跑，
+     不能只给最新那天。每天各自判 ready（各自要有自己的 D-1）和各自的 run 记录。 */
   const o=info.order_monitor, note=$('#omInboxNote');
   if(omBusy) return;              // 正在跑，保持现状
-  if(!o || (!o.ready && !(o.run && o.run.ok))){
-    // 没有存档、或缺 D-1（脚本要两天快照做对比）—— 这时手动表单是唯一入口，
+  if(!o){ $('#omRun').classList.add('primary'); note.hidden=true; return; }
+
+  // days 是后来才加的；只复制了 index.html 没复制 mailbox.py 时退回单天，别整块崩掉
+  const days=(o.days && o.days.length ? o.days.slice()
+                                      : [{date:o.date, prev_date:o.prev_date, ready:o.ready, run:o.run}])
+             .sort((a,b)=> a.date<b.date ? -1 : 1);          // 从早到晚
+  const pending=days.filter(x=> x.ready && !(x.run && x.run.ok));
+  const done=days.filter(x=> x.run && x.run.ok);
+
+  if(!pending.length && !done.length){
+    // 一天都跑不了（都缺 D-1，脚本要两天快照做对比）—— 手动表单是唯一入口，
     // 它的按钮得保持主操作样式
     $('#omRun').classList.add('primary');
-    if(!o){ note.hidden=true; return; }
     note.hidden=false; note.className='note warn';
-    note.innerHTML=`已取到 <b>${o.date}</b> 的报表，但${esc(o.reason)}。下面手动传两份也可以。`;
+    note.innerHTML=`已取到 <b>${esc(o.date)}</b> 的报表，但${esc(o.reason)}。下面手动传两份也可以。`;
     return;
   }
-  note.hidden=false;
 
-  const ran=o.run && o.run.ok;
-  note.className='note '+(ran?'ok':'');
-  // 文件已经备好时，主操作是上面那个按钮；下面的手动表单降级成备用入口，
+  note.hidden=false;
+  note.className='note '+(pending.length ? '' : 'ok');
+  // 上面有可点的日期时，下面的手动表单降级成备用入口，
   // 免得一张卡片里出现两个抢眼的蓝按钮，不知道该点哪个
   $('#omRun').classList.toggle('primary', false);
+
   const head=document.createElement('div');
-  head.innerHTML = ran
-    ? `✅ <b>${o.date}</b> 已跑完（${esc(o.run.detail||'群通知 + BD 私聊')}）`
-    : `📥 已备好 <b>${o.date}</b> 和 <b>${o.prev_date}</b> 两份报表，不用再选文件。`;
+  if(!pending.length){
+    const last=done[done.length-1];
+    head.innerHTML=`✅ <b>${esc(last.date)}</b>（${dw(last.date)}）已跑完（${esc((last.run.detail)||'群通知 + BD 私聊')}）`;
+  }else if(pending.length===1){
+    head.innerHTML=`📥 已备好 <b>${esc(pending[0].date)}</b>（${dw(pending[0].date)}）和 <b>${esc(pending[0].prev_date)}</b> 两份报表，不用再选文件。`;
+  }else{
+    head.innerHTML=`📥 积压 <b>${pending.length}</b> 天没跑（${esc(pending[0].date)} ~ ${esc(pending[pending.length-1].date)}）。`
+      + '按从早到晚一天一天跑，跑完一天这里会自动跳到下一天。';
+  }
+
   const act=document.createElement('div');
   act.className='row'; act.style.marginTop='8px';
-  const b=document.createElement('button');
-  b.type='button'; b.className='btn'+(ran?'':' primary');
-  b.textContent = ran ? `用 ${o.date} 的报表再跑一次` : `用 ${o.date} 的报表开始运行`;
-  b.addEventListener('click',()=>runFromInbox(o.date));
+  if(!pending.length){
+    const last=done[done.length-1];
+    const b=document.createElement('button');
+    b.type='button'; b.className='btn';
+    b.textContent=`用 ${last.date} 的报表再跑一次`;
+    b.addEventListener('click',()=>runFromInbox(last.date));
+    act.append(b);
+  }else if(pending.length===1){
+    const b=document.createElement('button');
+    b.type='button'; b.className='btn primary';
+    b.textContent=`用 ${pending[0].date}（${dw(pending[0].date)}）的报表开始运行`;
+    b.addEventListener('click',()=>runFromInbox(pending[0].date));
+    act.append(b);
+  }else{
+    // 积压多天时用下拉，不是一排按钮 —— 周末只有 2 天，春节能有 8 天，
+    // 一天一个按钮会把卡片撑爆。下拉不管几天都是同一个尺寸，
+    // 默认选**最早**那天（正常就该从早往晚补），想跳着跑就改选。
+    const sel=document.createElement('select');
+    sel.style.cssText='font-variant-numeric:tabular-nums';
+    pending.forEach(x=>{
+      const op=document.createElement('option');
+      op.value=x.date; op.textContent=`${x.date}（${dw(x.date)}）`;
+      sel.append(op);
+    });
+    sel.value=pending[0].date;
+    const b=document.createElement('button');
+    b.type='button'; b.className='btn primary';
+    b.textContent='用这天的报表开始运行';
+    b.addEventListener('click',()=>runFromInbox(sel.value));
+    act.append(sel,b);
+  }
   const hint=document.createElement('span');
   hint.style.cssText='font-size:12px;color:var(--ink-3)';
   hint.textContent='会发群通知和 BD 私聊。';
-  act.append(b,hint);
-  note.replaceChildren(head,act);
+  act.append(hint);
+
+  const kids=[head,act];
+  // 积压时把已跑完的那几天也列一行，否则跑完第一天后它就从卡片上消失了，
+  // 看不出「周六跑过了、现在轮到周日」
+  if(pending.length && done.length){
+    const fin=document.createElement('div');
+    fin.style.cssText='font-size:12px;color:var(--ink-3);margin-top:6px';
+    // 长假补完一半时 done 可能有七八天，全列出来这行会很长 —— 只报最近 3 天加个总数
+    const tail=done.slice(-3).map(x=>`${x.date}（${dw(x.date)}）`).join('、');
+    fin.textContent = done.length>3 ? `已跑完 ${done.length} 天，最近：${tail}`
+                                    : '已跑完：'+tail;
+    kids.push(fin);
+  }
+  note.replaceChildren(...kids);
+}
+
+/* YYYY-MM-DD → 「周六」。按本地时间构造，别用 new Date('2026-08-08') ——
+   那个按 UTC 解析，东八区会整体差一天，星期就错了。 */
+function dw(iso){
+  const p=String(iso||'').split('-').map(Number);
+  if(p.length!==3 || p.some(isNaN)) return '';
+  return '周'+'日一二三四五六'[new Date(p[0],p[1]-1,p[2]).getDay()];
 }
 
 /* 用邮箱存档里的两份报表跑一次。日志复用下面出单监控那块，不另开一处。 */

@@ -633,7 +633,24 @@ def latest(cfg: dict) -> dict:
             "ready": ready,
             "reason": "" if ready else f"缺 {prev} 的报表，需要两天才能做对比",
             "run": run_record(d),
-            "have": odates[:7],
+            # 每天单独一条。以前只回最新那天，于是周一回来面对周六+周日两份存档时，
+            # 卡片只给得出周日的按钮，周六只能退回下面的手动表单重选文件。
+            # 每天的 run 记录本来就是按日期存的（run_record 就是按 date 取的），
+            # ready 也各算各的 —— 缺的信息只是没往外送而已。
+            #
+            # 取 31 天不是 7 天：原来那个 have 卡在 7，春节能连放 8 天，
+            # 第 8 天会被静默截掉 —— 界面上根本不显示，人不会知道少跑了一天。
+            # 一个月足够覆盖任何长假，每条就四个字段，多带几天不值得省。
+            # （原来还有个 have 字段，全仓没有一处读它，一并删掉。）
+            "days": [
+                {
+                    "date": x,
+                    "prev_date": prev_day(x),
+                    "ready": find_archived("order_monitor", prev_day(x)) is not None,
+                    "run": run_record(x),
+                }
+                for x in odates[:31]
+            ],
         }
     else:
         out["order_monitor"] = None
