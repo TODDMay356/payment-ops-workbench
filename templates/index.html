@@ -819,12 +819,48 @@ async function refreshInbox(){
     }
   }
 
-  /* 出单监控：文件已经备好，跑不跑由人点 —— 那一下会往群里发通知、给 BD 发私聊。
-     一次可能积压好几天：周一回来手上是周六 + 周日两份，得**从早到晚**一天一天跑，
-     不能只给最新那天。每天各自判 ready（各自要有自己的 D-1）和各自的 run 记录。 */
+  omLastInfo=info;
+  renderOmInbox();
+}
+
+/* 出单监控：文件已经备好，跑不跑由人点 —— 那一下会往群里发通知、给 BD 发私聊。
+   一次可能积压好几天：周一回来手上是周六 + 周日两份，得**从早到晚**一天一天跑，
+   不能只给最新那天。每天各自判 ready（各自要有自己的 D-1）和各自的 run 记录。
+
+   单独抽出来，是因为除了 20 秒一次的 refreshInbox，选/清文件也要立刻重画一次
+   （见下面的互斥），那条路没必要再往服务端跑一趟。 */
+function renderOmInbox(){
+  const info=omLastInfo; if(!info) return;
   const o=info.order_monitor, note=$('#omInboxNote');
   if(omBusy) return;              // 正在跑，保持现状
   if(!o){ $('#omRun').classList.add('primary'); note.hidden=true; return; }
+
+  /* 两条路互斥：下面手动选了文件，就以下面那条为准。
+     以前两条同时活着，而显眼的是上面那个蓝按钮 —— 它跑的是邮箱存档里的日期，
+     把人刚选的两个文件**静默丢掉**。选错了不会报错，只会安静地跑错一天。 */
+  if(omHasManualFiles()){
+    $('#omRun').classList.add('primary');       // 主操作交还给下面的表单
+    note.hidden=false; note.className='note';
+    const h=document.createElement('div');
+    h.innerHTML='📎 你在下面选了文件，<b>这一栏先让开</b> —— 以你选的两份为准。';
+    const a=document.createElement('div');
+    a.className='row'; a.style.marginTop='8px';
+    const c=document.createElement('button');
+    c.type='button'; c.className='btn';
+    c.textContent='清空文件，改用邮箱存档';
+    c.addEventListener('click',()=>{
+      $('#omForm input[name=today]').value='';
+      $('#omForm input[name=yesterday]').value='';
+      $('#omDateHint').textContent='';
+      renderOmInbox();
+    });
+    const s=document.createElement('span');
+    s.style.cssText='font-size:12px;color:var(--ink-3)';
+    s.textContent='邮箱存档里还有 '+((o.days||[]).filter(x=>x.ready&&!(x.run&&x.run.ok)).length)+' 天没跑。';
+    a.append(c,s);
+    note.replaceChildren(h,a);
+    return;
+  }
 
   // days 是后来才加的；只复制了 index.html 没复制 mailbox.py 时退回单天，别整块崩掉
   const days=(o.days && o.days.length ? o.days.slice()
@@ -1000,7 +1036,14 @@ async function refreshActivity(){
 /* ---------- 出单监控：跑 + 实时日志 ---------- */
 let omSource=null;
 let omBusy=false;   // 跑的过程中别让 20 秒一次的 refreshInbox 把按钮重画掉
-let omPickedDate='';// 积压下拉里人选过的那天。同样是防那 20 秒重建，见 renderInbox
+let omPickedDate='';// 积压下拉里人选过的那天。同样是防那 20 秒重建，见 renderOmInbox
+let omLastInfo=null;// 最近一次 /api/inbox/latest 的结果，选/清文件时用它就地重画
+
+/* 下面的手动表单是不是已经选了文件。选了就把上面那栏让开 —— 两条路不能同时活。 */
+function omHasManualFiles(){
+  const f=n=>($(`#omForm input[name=${n}]`).files||[]).length>0;
+  return f('today') || f('yesterday');
+}
 
 function omAppend(line){
   const out=$('#omOut');
@@ -1059,11 +1102,15 @@ function dateFromName(name){
    顺手把从哪读出来的写在旁边，别让它变成看不见的魔法。 */
 $('#omForm input[name=today]').addEventListener('change', ev=>{
   const f=(ev.target.files||[])[0]; const hint=$('#omDateHint');
-  if(!f){ hint.textContent=''; return; }
-  const d=dateFromName(f.name);
-  if(d){ $('#omDate').value=d; hint.textContent=`已按文件名填成 ${d}`; hint.style.color='var(--ink-3)'; }
-  else { hint.textContent='文件名里没读出日期，请自己确认下面的业务日期'; hint.style.color='var(--warn)'; }
+  if(!f){ hint.textContent=''; }
+  else {
+    const d=dateFromName(f.name);
+    if(d){ $('#omDate').value=d; hint.textContent=`已按文件名填成 ${d}`; hint.style.color='var(--ink-3)'; }
+    else { hint.textContent='文件名里没读出日期，请自己确认下面的业务日期'; hint.style.color='var(--warn)'; }
+  }
+  renderOmInbox();       // 选/清文件立刻切换互斥状态，别等那 20 秒
 });
+$('#omForm input[name=yesterday]').addEventListener('change', renderOmInbox);
 
 $('#omForm').addEventListener('submit', async ev=>{
   ev.preventDefault();
