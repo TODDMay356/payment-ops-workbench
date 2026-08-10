@@ -394,7 +394,8 @@
               <label class="f"><span>昨天的报表</span>
                 <input type="file" name="yesterday" accept=".xlsx,.xls" required></label>
               <label class="f"><span>业务日期</span>
-                <input type="date" name="date" id="omDate" required></label>
+                <input type="date" name="date" id="omDate" required>
+                <span id="omDateHint" style="font-size:11px;color:var(--ink-3)"></span></label>
               <label class="f"><span>脚本密码</span>
                 <input type="password" name="password" autocomplete="current-password" required></label>
             </div>
@@ -884,7 +885,12 @@ async function refreshInbox(){
       op.value=x.date; op.textContent=`${x.date}（${dw(x.date)}）`;
       sel.append(op);
     });
-    sel.value=pending[0].date;
+    // 这张卡片每 20 秒被 refreshInbox 整个重建一次。以前这里无脑选 pending[0]，
+    // 于是「选了 08-08 → 等一会儿 → 点运行」跑的是最早那天，看起来像「只能按顺序跑」。
+    // 记住人选过的那天，只要它还在待跑列表里就恢复回去。
+    sel.value = (omPickedDate && pending.some(x=>x.date===omPickedDate))
+              ? omPickedDate : pending[0].date;
+    sel.addEventListener('change',()=>{ omPickedDate=sel.value; });
     const b=document.createElement('button');
     b.type='button'; b.className='btn primary';
     b.textContent='用这天的报表开始运行';
@@ -994,6 +1000,7 @@ async function refreshActivity(){
 /* ---------- 出单监控：跑 + 实时日志 ---------- */
 let omSource=null;
 let omBusy=false;   // 跑的过程中别让 20 秒一次的 refreshInbox 把按钮重画掉
+let omPickedDate='';// 积压下拉里人选过的那天。同样是防那 20 秒重建，见 renderInbox
 
 function omAppend(line){
   const out=$('#omOut');
@@ -1033,6 +1040,30 @@ function omStream(jobId){
     }).catch(()=> omFinish('err','日志连接中断'));
   };
 }
+
+/* 文件名 → YYYY-MM-DD。认 2026-08-08 和 20260808 两种写法
+   （mailbox.example.json 里 order_monitor 用前者、conversion 用后者）。 */
+function dateFromName(name){
+  const s=String(name||'');
+  let m=s.match(/(\d{4})-(\d{2})-(\d{2})/) || s.match(/(\d{4})(\d{2})(\d{2})/);
+  if(!m) return '';
+  const [,y,mo,da]=m;
+  // 挡住把订单号之类的八位数字当日期
+  if(+mo<1||+mo>12||+da<1||+da>31||+y<2000||+y>2100) return '';
+  return `${y}-${mo}-${da}`;
+}
+
+/* 业务日期原来只在开页时填一次「昨天」，之后不跟着走。
+   于是「选了 8-08 的文件 → 业务日期还停在 8-09 → 跑出来是 8-09」——
+   文件对、日期错，而错的那个才是传给脚本的。这里跟着「今天的报表」自动改，
+   顺手把从哪读出来的写在旁边，别让它变成看不见的魔法。 */
+$('#omForm input[name=today]').addEventListener('change', ev=>{
+  const f=(ev.target.files||[])[0]; const hint=$('#omDateHint');
+  if(!f){ hint.textContent=''; return; }
+  const d=dateFromName(f.name);
+  if(d){ $('#omDate').value=d; hint.textContent=`已按文件名填成 ${d}`; hint.style.color='var(--ink-3)'; }
+  else { hint.textContent='文件名里没读出日期，请自己确认下面的业务日期'; hint.style.color='var(--warn)'; }
+});
 
 $('#omForm').addEventListener('submit', async ev=>{
   ev.preventDefault();
