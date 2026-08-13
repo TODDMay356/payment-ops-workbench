@@ -336,15 +336,41 @@ def ai_summary():
     except Exception:
         data = {"raw": r.text[:500]}
 
-    content = ""
+    # HTTP 200 但正文是空的，这在推理模型上很常见，原因全写在 choices[0] 里。
+    # 以前这里只把响应盲截 200 字抛出来，而 finish_reason / usage / reasoning_content
+    # 恰好都排在那 200 字后面 —— 等于把唯一能解释失败的东西截掉了。
+    choice, message = {}, {}
     try:
-        content = (data["choices"][0]["message"]["content"] or "").strip()
+        choice = (data.get("choices") or [{}])[0] or {}
+        message = choice.get("message") or {}
     except Exception:
         pass
+    content   = str(message.get("content") or "").strip()
+    reasoning = str(message.get("reasoning_content") or "").strip()   # 推理模型把思考过程放这
+    finish    = str(choice.get("finish_reason") or "")
+    usage     = data.get("usage") or {}
+
     if not content:
-        msg = (data.get("error") or {}).get("message") or json.dumps(data, ensure_ascii=False)[:200]
-        _record("ai", False, f"返回异常：{msg}")
-        return jsonify({"ok": False, "msg": f"AI 返回异常（HTTP {r.status_code}）：{msg}"}), 502
+        vendor = (data.get("error") or {}).get("message")
+        if vendor:
+            why = vendor
+        elif finish == "length":
+            # max_tokens 用完了。推理模型会先花掉一大截额度想，想超了正文就一个字都没有
+            spent = usage.get("completion_tokens")
+            why = (f"max_tokens（当前 {payload['max_tokens']}）在正文写出来之前就用完了"
+                   + (f"，本次已消耗 {spent} tokens" if spent else "")
+                   + ("，其中大部分花在模型的思考过程上" if reasoning else "")
+                   + "。请把 config.json 的 ai.max_tokens 调大后重启工作台。")
+        elif reasoning:
+            why = ("模型只输出了思考过程、没有输出正文"
+                   f"（思考 {len(reasoning)} 字，finish_reason={finish or '未给'}）。"
+                   "多半是 max_tokens 不够，调大 config.json 的 ai.max_tokens 后重启。")
+        else:
+            # 真的看不出原因时才回落到原始响应，但把关键字段先摆出来，别再盲截
+            why = (f"正文为空（finish_reason={finish or '未给'}，usage={usage or '未给'}）。"
+                   f"原始响应：{json.dumps(data, ensure_ascii=False)[:400]}")
+        _record("ai", False, f"返回异常：{why[:120]}")
+        return jsonify({"ok": False, "msg": f"AI 返回异常（HTTP {r.status_code}）：{why}"}), 502
 
     _record("ai", True, f"{payload['model']} 生成 {len(content)} 字")
     return jsonify({"ok": True, "content": content, "model": payload["model"]})
