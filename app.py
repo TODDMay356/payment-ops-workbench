@@ -270,7 +270,9 @@ def bootstrap():
         # 工具页据此决定要不要显示「AI 总结」按钮、要不要还让用户填 key
         "ai": {
             "available": bool((config.get("ai") or {}).get("api_key")),
-            "model": (config.get("ai") or {}).get("model") or "deepseek-chat",
+            # 如实回配置里那个值。以前缺省顶一个 deepseek-chat 上去，
+            # 界面就显示着一个根本不会被调用成功的名字，等于替配置错误打掩护
+            "model": ((config.get("ai") or {}).get("model") or "").strip(),
             "endpoint": f"{base}/api/ai/summary",
         },
     })
@@ -298,9 +300,18 @@ def ai_summary():
     if not prompt:
         abort(400, description="缺少 prompt")
 
+    # 以前这里是 `ai.get("model") or "deepseek-chat"`。写死厂商的模型名必然过期 ——
+    # 而它确实过期了：DeepSeek 现在只认 deepseek-v4-pro / deepseek-v4-flash，
+    # 于是 model 留空就静默套上一个已经不存在的名字，换来一个看不懂的 400。
+    # 模型名只有配置里那一个来源，缺了就直说，不替人猜。
+    model = (ai.get("model") or "").strip()
+    if not model:
+        abort(400, description="未配置 AI 模型名。请在 config.json 的 ai.model 填入后重启工作台，"
+                               "例如 deepseek-v4-pro。填错时接口会把合法值列在报错里。")
+
     base = (ai.get("base_url") or "https://api.deepseek.com").rstrip("/")
     payload = {
-        "model": ai.get("model") or "deepseek-chat",
+        "model": model,
         "max_tokens": int(body.get("max_tokens") or ai.get("max_tokens") or 2000),
         "stream": False,
         "messages": [

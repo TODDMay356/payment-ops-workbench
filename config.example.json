@@ -31,10 +31,10 @@
     "my_open_id": ""
   },
 
-  "_comment_ai": "AI 总结。key 只放这里，由工作台代转 —— 浏览器直连大模型接口会被 CORS 拦（离线打开 HTML 时必然失败），而且不用每次在页面上手输 key。留空则两个工具页退回「复制提示词 → 粘到大模型 → 把回答粘回来」的手动模式。换通义/Moonshot/火山方舟等 OpenAI 兼容服务只改 base_url 和 model。",
+  "_comment_ai": "AI 总结。key 只放这里，由工作台代转 —— 浏览器直连大模型接口会被 CORS 拦（离线打开 HTML 时必然失败），而且不用每次在页面上手输 key。留空则两个工具页退回「复制提示词 → 粘到大模型 → 把回答粘回来」的手动模式。换通义/Moonshot/火山方舟等 OpenAI 兼容服务只改 base_url 和 model。model 要填接口认的那个 ID，不是官网上的展示名 —— 比如 DeepSeek-V4-Pro-0813 是展示名，接口要的是 deepseek-v4-pro。填错时接口会在报错里把合法值列出来，照抄即可。",
   "ai": {
     "base_url": "https://api.deepseek.com",
-    "model": "deepseek-chat",
+    "model": "deepseek-v4-pro",
     "api_key": "",
     "max_tokens": 2000,
     "timeout": 120
