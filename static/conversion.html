@@ -738,6 +738,10 @@ const OVERALL_METRIC = '业务单支付成功率';
  * 群里其他人打不开，也没必要把内部工具暴露给收消息的人。
  */
 const BROADCAST_PRIO_TOP = 3;
+/* 播报正文字数上限。以前没有任何长度保护 —— feishu.py 和前端都没有，
+   极端行情下消息会顶到接口上限、整条发送失败，而且失败原因未必看得出是长度。
+   超了就少列几条并在末尾说明，不让一条告警都收不到。 */
+const BROADCAST_MAX_CHARS = 4000;
 // 指标 → 所属大环节 / 缩进层级，供探测与排序使用
 const METRIC_STAGE = {}, METRIC_DEPTH = {}, METRIC_ORDER = {};
 (function(){
@@ -1263,20 +1267,23 @@ function uniq(a){ return [...new Set(a)]; }
 function headlineLines(stages, alarms, tDate, srcStory){
   const P_=P(), L=[];
 
-  // 商户行。注意口径：这里的「影响」是 PO占比 × 该商户比率变动，加总等于**本环节**的
-  // 比率变动；环节再乘漏斗前后段系数才是对整体的 pt。所以写「对本环节」，不能写成对整体。
-  // 一家一行。数值口径：比率变动是「个百分点」，影响是 PO占比×比率变动，
-  // 加总等于本环节的比率变动 —— 也是百分点，所以两处都说 pt，不混 %。
+  /* 商户名去掉打码尾巴：「速飛*******司」→「速飛」。
+     星号既区分不了商户也占着最宽的位置 —— 这份数据里「香港*********司」对应 15 个
+     不同用户ID，完整写出来一样分不开，真要区分靠的是下面那个站点。 */
+  const shortMerchant=n=>{ const s=String(n||''), i=s.indexOf('*'); return i>0 ? s.slice(0,i) : s; };
+  /* 站点去掉协议头。67 个站点值里 58 个带 https://，占近 12% 的篇幅却没有信息量。 */
+  const shortSite=s=>String(s||'').replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/$/,'');
+
+  /* 商户行。带站点是因为 drillMetric 按**站点**拆，同一家商户会连出好几行 ——
+     不写站点就看不出「啟東」为什么出现两次（同一个用户ID，top-malls 和 best-malls），
+     读起来像重复推送。
+     原来那串「下降 X 个百分点；对本环节造成 Y pt 的负向影响」去掉了：X 就是前面
+     两个比率相减，而 Y 的排序意义已经由行序表达 —— 行本来就是按影响从大到小排的。 */
   const merchantLines=(side)=>{
     if(!side.rows.length) return side.reason ? [`     ${side.reason}`] : [];
-    return side.rows.slice(0,BROADCAST_PRIO_TOP).map(r=>{
-      const d   = parseFloat(String(r['比率环比变动']).replace('%',''));
-      const imp = parseFloat(String(r['影响比率']).replace('%',''));
-      return `     ${r['商户名称']} PO ${r['本期PO总单量'].toLocaleString()}笔，`
-           + `${r['上期比率']}→${r['本期比率']}`
-           + `（${d<0?'下降':'上升'} ${Math.abs(d).toFixed(2)} 个百分点；`
-           + `对本环节造成 ${Math.abs(imp).toFixed(2)}pt 的${imp<0?'负向':'正向'}影响）`;
-    });
+    return side.rows.slice(0,BROADCAST_PRIO_TOP).map(r=>
+      `     ${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
+      + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`);
   };
 
   const stageLine=(side, isMain, up)=>{
@@ -1297,6 +1304,51 @@ function headlineLines(stages, alarms, tDate, srcStory){
     return `     └ 穿透：${path.join(' → ')}；以下商户按 ${code} 拆`;
   };
 
+  /* 上面只讲每个来源最拖累的那一个大环节。触发了阈值、但挂在别的环节下面的告警，
+     以前在推送里一个字都没有 —— 页面上有，可没人会去翻页面，推送看着是完整的。
+     真实例子：2026-08-12 独立站API直连的 3.3 3DS通过率 跌了 5.3%（阈值 3%）、
+     3.3.2 政策3DS通过率 跌了 7.6%（阈值 2%），两条都触发了，都没进推送 ——
+     因为它们在环节3 下面，而环节3 只贡献 −0.18pt，最拖累的环节4 贡献 −9.10pt。
+     环节3 从来没被穿透过，它下面的东西自然也就没人看见。
+     所以这里把剩下的照样列出来，每条同样给 top3 商户。 */
+  const shownKey=(src,m)=>src+'|'+m;
+  const shown=new Set();
+  (srcStory||[]).forEach(s=>{
+    [s.up,s.down].filter(Boolean).forEach(side=>{
+      shown.add(shownKey(s.src, side.metric));
+      (side.chain||[]).forEach(c=>shown.add(shownKey(s.src, c.metric)));
+    });
+  });
+  // alarms 是 alarmTotal + alarmSite 拼起来的，同一条场景指标会出现两次，先去重
+  const seenA=new Set(), restBySrc={};
+  for(const a of (alarms||[])){
+    const src=a['来源'], m=a['异常指标'], k=shownKey(src,m);
+    if(seenA.has(k) || shown.has(k)) continue;
+    seenA.add(k);
+    (restBySrc[src]=restBySrc[src]||[]).push(a);
+  }
+  // 每个来源内按幅度从大到小 —— 先看动得最狠的
+  Object.values(restBySrc).forEach(list=>
+    list.sort((x,y)=>Math.abs(y._dod||0)-Math.abs(x._dod||0)));
+
+  const d0 = (typeof state!=='undefined' && state.data) ? state.data : null;
+  const totalPO = d0 ? totalPOBySource(d0.mergedSite) : {};
+  const restLines=(src,a)=>{
+    const m=a['异常指标'];
+    const out=[`  · ${m} ${a['上期比率']}→${a['本期比率']}（${a['环比']}）`];
+    if(!d0) return out;
+    let rows=[];
+    try{
+      rows=drillMetric(d0.mergedSite, src, m, FRICTION_METRICS.includes(m),
+                       totalPO[src]||0, d0.hasSite, (a._dod||0)>0 ? 'better' : 'worse')||[];
+    }catch(e){ rows=[]; }
+    rows.slice(0,BROADCAST_PRIO_TOP).forEach(r=>out.push(
+      `     ${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
+      + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`));
+    return out;
+  };
+
+  let budget=BROADCAST_MAX_CHARS, dropped=0;
   for(const s of (srcStory||[])){
     L.push(`■ ${s.src}｜业务单支付成功率 ${pct(s.overallT)}（${P_.dod} ${ptFmt(s.dOverall)}，上期 ${pct(s.overallY)}）`);
     // 和整体同向的那侧先写 —— 那才是"为什么涨/为什么跌"的答案
@@ -1314,7 +1366,15 @@ function headlineLines(stages, alarms, tDate, srcStory){
       const c=chainLine(counter); if(c) L.push(c);
       L.push(...merchantLines(counter));
     }
+    // 该来源其余触发的告警。留了字数上限：宁可明说"还有 N 条"，
+    // 也不要整条消息超长被接口拒掉 —— 那样是一条都收不到，且未必看得出是长度问题
+    for(const a of (restBySrc[s.src]||[])){
+      const blk=restLines(s.src, a), cost=blk.join('\n').length+1;
+      if(cost>budget){ dropped++; continue; }
+      budget-=cost; L.push(...blk);
+    }
   }
+  if(dropped) L.push(`（另有 ${dropped} 条告警因篇幅未列出，详见工作台页面）`);
   return L;
 }
 
