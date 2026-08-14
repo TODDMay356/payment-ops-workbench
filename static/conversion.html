@@ -1288,7 +1288,17 @@ function headlineLines(stages, alarms, tDate, srcStory){
      挂在最深处的就是根因，上面还有更深告警的就是已解释，再标一遍是废话。
      局部（所属大环节其实没事）和未解释（子指标都正常、另有原因）
      这两个结构表达不出来，得留着。 */
-  const roleTag=a=>(a && (a._role==='局部'||a._role==='未解释')) ? `，${a._role}` : '';
+  /* 只标这两种：
+     局部   = 所属大环节自己没触发告警（annotateHierarchy 里就是这么判的），
+              播报里说成「未对主环节造成影响」—— 读的人关心的是要不要管，不是内部术语。
+     未解释 = 大环节异常但子指标全正常，另有原因，得人工看。
+     根因/已解释 不标：树形结构已经说了 —— 挂在最深的就是根因，上面有更深的就是已解释。 */
+  const roleTag=a=>{
+    if(!a) return '';
+    if(a._role==='局部')   return '，未对主环节造成影响';
+    if(a._role==='未解释') return '，未解释';
+    return '';
+  };
   const rateTxt=(src,m,a)=>{
     if(a) return `${a['上期比率']}→${a['本期比率']}（${a['环比']}${roleTag(a)}）`;
     const y=(mapY[src]||{})[m], t=(mapT[src]||{})[m];
@@ -1334,24 +1344,49 @@ function headlineLines(stages, alarms, tDate, srcStory){
     return out;
   };
 
-  const stageTree=(src, code)=>{
+  /* 3DS 交易占比那几个（FRICTION_METRICS）不进各环节的树 —— 它们单独成段。
+     占比上升说的是「更多单被推去做 3DS 验证」，和「某个环节通过率掉了」是两回事，
+     混在同一棵树里读的人会当成同一个原因。它们只在**上升**时才报：
+     占比下降是好事，阈值那边本来也只对上升触发（friction_rise）。 */
+  const isFric=m=>FRICTION_METRICS.includes(m);
+
+  /* 一棵子树：子环节 → 孙环节 → 商户。pick 决定哪些指标算数
+     （各环节树排除 3DS 占比，3DS 段只要 3DS 占比）。
+     有孙的节点只当路标不拆商户，商户永远拆在最深那层，避免父子重复列同一批人。 */
+  const subTree=(src, code, pick, pad)=>{
     const A=byMetric[src]||{}, lines=[]; let n=0;
+    const p1=pad, p2=pad+'   ', p3=pad+'      ';
     for(const kid of childrenOf(code)){
-      const kA=A[kid];
-      const grands=childrenOf(METRIC_CODE[kid]||'').filter(g=>A[g])
+      const kA=A[kid], kOk=kA && pick(kid);
+      const grands=childrenOf(METRIC_CODE[kid]||'').filter(g=>A[g] && pick(g))
         .sort((x,y)=>Math.abs(A[y]._dod||0)-Math.abs(A[x]._dod||0));
-      if(!kA && !grands.length) continue;              // 这一支没动静，不占篇幅
-      lines.push(`     └ ${kid} ${rateTxt(src,kid,kA)}`);
-      if(kA) n++;
+      if(!kOk && !grands.length) continue;             // 这一支没动静，不占篇幅
+      lines.push(`${p1}└ ${kid} ${rateTxt(src,kid,kA)}`);
+      if(kOk) n++;
       if(!grands.length){                               // 没有孙 → 就停在子环节做商户分析
-        lines.push(...merchants(src, kid, dirOf(kA, kid), '        '));
+        lines.push(...merchants(src, kid, dirOf(kA, kid), p2));
         continue;
       }
+      // 多个孙都在动就全列出来，不做取舍 —— 只留最狠的那个会把兄弟静默吞掉
       for(const g of grands){
-        lines.push(`        └ ${g} ${rateTxt(src,g,A[g])}`);
-        lines.push(...merchants(src, g, dirOf(A[g], g), '           '));
+        lines.push(`${p2}└ ${g} ${rateTxt(src,g,A[g])}`);
+        lines.push(...merchants(src, g, dirOf(A[g], g), p3));
         n++;
       }
+    }
+    return {lines, n};
+  };
+  const stageTree=(src, code)=>subTree(src, code, m=>!isFric(m), '     ');
+
+  /* 3DS 交易占比段。跨环节收集所有触发的占比指标（3.1.2 挂在 3.1 下、
+     3.2.x 挂在 3.2 下），父级即使自己没触发也写出来撑住层级。 */
+  const fricTree=(src)=>{
+    const A=byMetric[src]||{};
+    if(!Object.keys(A).some(m=>isFric(m))) return {lines:[], n:0};
+    const lines=[]; let n=0;
+    for(const st of ['1','2','3','4']){
+      const t=subTree(src, st, isFric, '     ');
+      lines.push(...t.lines); n+=t.n;
     }
     return {lines, n};
   };
@@ -1368,32 +1403,50 @@ function headlineLines(stages, alarms, tDate, srcStory){
     // 反方向拉得最狠的那个 —— 「同期拉升/拖累」讲的就是它，够大才值得说
     const counterSt = ss.slice().sort((a,b)=> rising ? a.contrib-b.contrib : b.contrib-a.contrib)[0];
     const others = ss.filter(x=>x!==mainSt).sort((a,b)=>Math.abs(b.contrib)-Math.abs(a.contrib));
-    for(const st of [mainSt, ...others]){
-      if(!st) continue;
-      const isMain = st===mainSt;
-      const t=stageTree(s.src, st.code);
-      let body=t.lines, cnt=t.n;
-      if(!body.length){
-        /* 这个环节下面一条告警都没触发。只有两种情况还值得占篇幅：
-           它是主环节（总得说清整体为什么动），或者它是反方向那个够大的
-           —— 那是「虽然跌了但某处在拉」的信息。其余一律略过：
-           环节1 拉低 0.19pt、商户比率 100.06%→100.00%，写出来纯是噪声。 */
-        const isCounter = st===counterSt && (st.contrib>=0)!==rising;
-        if(!isMain && !(isCounter && Math.abs(st.contrib)>=COUNTER_DIR_FLOOR)) continue;
-        body=merchants(s.src, `${st.code}. ${st.label}`, st.contrib>=0?'better':'worse', '     ');
-      }
-      const up = st.contrib>=0;
-      const head=`  ${up?'↑':'↓'} ${isMain?'主要来自':(up?'同期拉升':'同期拖累')} 环节${st.code} ${st.label} `
-               + `${pct(st.rateY)}→${pct(st.rateT)}（${ptFmt(st.rateT-st.rateY)}，`
-               + `${st.contrib<0?'拉低':'拉动'}整体 ${ptFmt(st.contrib)}）`;
+
+    /* 段落顺序固定：主要问题 → 次要问题（可多条）→ 3DS交易占比上升 → 同期拉升。
+       和整体同向的先说完，再说 3DS 占比，最后才说反方向在拉的那个 ——
+       否则「哪些是坏消息」会被中间插进来的好消息打断。 */
+    const emit=(head, body, cnt, exempt)=>{
       const cost=head.length+1+body.join('\n').length+1;
       /* 字数上限：宁可明说「还有 N 条」，也不要整条消息超长被接口拒掉 ——
          那样是一条都收不到，且失败原因未必看得出是长度。
-         但主环节不受这个限制：它是「这个来源为什么动」的答案，砍掉它就只剩
-         一行光秃秃的抬头，比少几条次要告警糟得多。来源就两个，主环节的量有上界。 */
-      if(!isMain && cost>budget){ dropped+=Math.max(cnt,1); continue; }
-      budget-=cost;
-      L.push(head, ...body);
+         主环节豁免：它是「这个来源为什么动」的答案，砍掉就只剩一行光秃秃的抬头，
+         比少几条次要告警糟得多。来源就两个，主环节的量有上界。 */
+      if(!exempt && cost>budget){ dropped+=Math.max(cnt,1); return; }
+      budget-=cost; L.push(head, ...body);
+    };
+    const stageHead=(st, label)=>
+      `  ${st.contrib>=0?'↑':'↓'} ${label} 环节${st.code} ${st.label} `
+      + `${pct(st.rateY)}→${pct(st.rateT)}（${ptFmt(st.rateT-st.rateY)}，`
+      + `${st.contrib<0?'拉低':'拉动'}整体 ${ptFmt(st.contrib)}）`;
+
+    // ① 主要问题
+    if(mainSt){
+      const t=stageTree(s.src, mainSt.code);
+      const body=t.lines.length ? t.lines
+        : merchants(s.src, `${mainSt.code}. ${mainSt.label}`, mainSt.contrib>=0?'better':'worse', '     ');
+      emit(stageHead(mainSt,'主要问题'), body, t.n, true);
+    }
+    // ② 次要问题：和整体同向、还有告警的环节，有几个说几个
+    const counters=[];
+    for(const st of others){
+      const sameDir = (st.contrib>=0)===rising;
+      const t=stageTree(s.src, st.code);
+      if(!sameDir){ counters.push(st); continue; }
+      if(!t.lines.length) continue;      // 没告警的同向环节是噪声，不占篇幅
+      emit(stageHead(st,'次要问题'), t.lines, t.n, false);
+    }
+    // ③ 3DS 交易占比上升，单独一段，不和上面的环节树混在一起
+    const fr=fricTree(s.src);
+    if(fr.lines.length) emit('  ↑ 3DS交易占比上升', fr.lines, fr.n, false);
+    // ④ 反方向：拉得最狠且够大的那个，说明「虽然整体在跌，但这里在拉」
+    for(const st of counters){
+      if(st!==counterSt || Math.abs(st.contrib)<COUNTER_DIR_FLOOR) continue;
+      const t=stageTree(s.src, st.code);
+      const body=t.lines.length ? t.lines
+        : merchants(s.src, `${st.code}. ${st.label}`, st.contrib>=0?'better':'worse', '     ');
+      emit(stageHead(st, st.contrib>=0?'同期拉升':'同期拖累'), body, t.n, false);
     }
   }
   if(dropped) L.push(`（另有 ${dropped} 条告警因篇幅未列出，详见工作台页面）`);
