@@ -1269,187 +1269,122 @@ function headlineLines(stages, alarms, tDate, srcStory){
 
   /* 商户名去掉打码尾巴：「速飛*******司」→「速飛」。
      星号既区分不了商户也占着最宽的位置 —— 这份数据里「香港*********司」对应 15 个
-     不同用户ID，完整写出来一样分不开，真要区分靠的是下面那个站点。 */
+     不同用户ID，完整写出来一样分不开，真要区分靠的是后面那个站点。 */
   const shortMerchant=n=>{ const s=String(n||''), i=s.indexOf('*'); return i>0 ? s.slice(0,i) : s; };
   /* 站点去掉协议头。67 个站点值里 58 个带 https://，占近 12% 的篇幅却没有信息量。 */
   const shortSite=s=>String(s||'').replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/$/,'');
 
-  /* 商户行。带站点是因为 drillMetric 按**站点**拆，同一家商户会连出好几行 ——
-     不写站点就看不出「啟東」为什么出现两次（同一个用户ID，top-malls 和 best-malls），
-     读起来像重复推送。
-     原来那串「下降 X 个百分点；对本环节造成 Y pt 的负向影响」去掉了：X 就是前面
-     两个比率相减，而 Y 的排序意义已经由行序表达 —— 行本来就是按影响从大到小排的。 */
-  const merchantLines=(side)=>{
-    if(!side.rows.length) return side.reason ? [`     ${side.reason}`] : [];
-    return side.rows.slice(0,BROADCAST_PRIO_TOP).map(r=>
-      `     ${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
-      + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`);
-  };
-
-  const stageLine=(side, isMain, up)=>{
-    const st=side.st;
-    const verb = up ? (isMain?'主要来自':'同期拉升') : (isMain?'主要来自':'同期拖累');
-    const arrow = up ? '↑' : '↓';
-    return `  ${arrow} ${verb} 环节${st.code} ${st.label} ${pct(st.rateY)}→${pct(st.rateT)}`
-         + `（${ptFmt(st.rateT-st.rateY)}，${st.contrib<0?'拉低':'拉动'}整体 ${ptFmt(st.contrib)}）`;
-  };
-
-  // 大环节是结果，不是原因。把造成它变动的子/孙环节写出来，商户也是按最细那层拆的。
-  // 末尾点明按哪一层拆 —— 否则下面商户行的「对本环节」会被当成大环节，
-  // 而那个数是对 leaf 指标的（可能比大环节的变动大得多）。
-  const chainLine=(side)=>{
-    if(!side.chain || !side.chain.length) return '';
-    const path=side.chain.map(c=>`${c.metric} ${pct(c.rateY)}→${pct(c.rateT)}（${ptFmt(c.delta)}）`);
-    const code=METRIC_CODE[side.leaf]||side.leaf;
-    return `     └ 穿透：${path.join(' → ')}；以下商户按 ${code} 拆`;
-  };
-
-  /* 上面只讲每个来源最拖累的那一个大环节。触发了阈值、但挂在别的环节下面的告警，
-     以前在推送里一个字都没有 —— 页面上有，可没人会去翻页面，推送看着是完整的。
-     真实例子：2026-08-12 独立站API直连的 3.3 3DS通过率 跌了 5.3%（阈值 3%）、
-     3.3.2 政策3DS通过率 跌了 7.6%（阈值 2%），两条都触发了，都没进推送 ——
-     因为它们在环节3 下面，而环节3 只贡献 −0.18pt，最拖累的环节4 贡献 −9.10pt。
-     环节3 从来没被穿透过，它下面的东西自然也就没人看见。
-     所以这里把剩下的照样列出来，每条同样给 top3 商户。 */
-  const shownKey=(src,m)=>src+'|'+m;
-  const shown=new Set();
-  (srcStory||[]).forEach(s=>{
-    [s.up,s.down].filter(Boolean).forEach(side=>{
-      shown.add(shownKey(s.src, side.metric));
-      (side.chain||[]).forEach(c=>shown.add(shownKey(s.src, c.metric)));
-    });
-  });
-  // alarms 是 alarmTotal + alarmSite 拼起来的，同一条场景指标会出现两次，先去重
-  const seenA=new Set(), restBySrc={};
-  for(const a of (alarms||[])){
-    const src=a['来源'], m=a['异常指标'], k=shownKey(src,m);
-    if(seenA.has(k) || shown.has(k)) continue;
-    seenA.add(k);
-    (restBySrc[src]=restBySrc[src]||[]).push(a);
-  }
-  // 每个来源内按幅度从大到小 —— 先看动得最狠的
-  Object.values(restBySrc).forEach(list=>
-    list.sort((x,y)=>Math.abs(y._dod||0)-Math.abs(x._dod||0)));
-
   const d0 = (typeof state!=='undefined' && state.data) ? state.data : null;
   const totalPO = d0 ? totalPOBySource(d0.mergedSite) : {};
+  // 子环节没触发告警时也要写出它的两期值来撑住层级，所以要能查任意指标的比率
+  const mapT = d0 ? sceneMap(d0.dfScene, d0.tDate) : {};
+  const mapY = d0 ? sceneMap(d0.dfScene, d0.yDate) : {};
 
-  /* 一条告警链：父指标先说，再说是被哪个子指标带下去的，商户按最细那层拆。
-     编号本身就是层级 —— 3.3 是子环节、3.3.2 是孙环节，因果是 3.3.2 → 3.3，
-     所以必须 3.3 在前。以前按跌幅排，3.3.2（-7.6%）反而排在 3.3（-5.3%）前面，
-     因果倒着讲；而且两条各带一份 top3，商户几乎完全重复
-     （政策3DS 占 3DS 的大头，拆出来本来就是同一批人）。
-     写法和上面主环节的「穿透」保持一致，一条消息里不搞两套说法。
+  // alarms 是 alarmTotal + alarmSite 拼起来的，同一条场景指标会出现两次，按 来源→指标 索引即去重
+  const byMetric={};
+  for(const a of (alarms||[])) (byMetric[a['来源']]=byMetric[a['来源']]||{})[a['异常指标']]=a;
 
-     三态只留 局部 和 未解释：根因/已解释 在链式结构里是自明的
-     —— 排在链尾的就是根因，上面有链尾的就是已解释。
+  /* 三态只留 局部 和 未解释：根因/已解释 在树形结构里是自明的 ——
+     挂在最深处的就是根因，上面还有更深告警的就是已解释，再标一遍是废话。
      局部（所属大环节其实没事）和未解释（子指标都正常、另有原因）
      这两个结构表达不出来，得留着。 */
-  const roleTag=a=>(a._role==='局部'||a._role==='未解释') ? `，${a._role}` : '';
-  const metricTxt=a=>`${a['异常指标']} ${a['上期比率']}→${a['本期比率']}（${a['环比']}${roleTag(a)}）`;
-  const restLines=(src, chain)=>{
-    const head=chain[0], leaf=chain[chain.length-1];
-    const out=[`     ${metricTxt(head)}`];
-    if(chain.length>1){
-      const code=METRIC_CODE[leaf['异常指标']]||leaf['异常指标'];
-      out.push(`        └ 穿透：${chain.slice(1).map(metricTxt).join(' → ')}；以下商户按 ${code} 拆`);
-    }
-    if(!d0) return out;
-    const m=leaf['异常指标'];
+  const roleTag=a=>(a && (a._role==='局部'||a._role==='未解释')) ? `，${a._role}` : '';
+  const rateTxt=(src,m,a)=>{
+    if(a) return `${a['上期比率']}→${a['本期比率']}（${a['环比']}${roleTag(a)}）`;
+    const y=(mapY[src]||{})[m], t=(mapT[src]||{})[m];
+    return (y!=null&&t!=null) ? `${pct(y)}→${pct(t)}（${ptFmt(t-y)}，未触发）` : '（本期无数）';
+  };
+
+  const merchants=(src, metric, dir, pad)=>{
+    if(!d0) return [];
     let rows=[];
-    try{
-      rows=drillMetric(d0.mergedSite, src, m, FRICTION_METRICS.includes(m),
-                       totalPO[src]||0, d0.hasSite, (leaf._dod||0)>0 ? 'better' : 'worse')||[];
-    }catch(e){ rows=[]; }
-    rows.slice(0,BROADCAST_PRIO_TOP).forEach(r=>out.push(
-      `        ${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
-      + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`));
+    try{ rows=drillMetric(d0.mergedSite, src, metric, FRICTION_METRICS.includes(metric),
+                          totalPO[src]||0, d0.hasSite, dir)||[]; }catch(e){ rows=[]; }
+    return rows.slice(0,BROADCAST_PRIO_TOP).map(r=>
+      `${pad}${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
+      + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`);
+  };
+  const dirOf=a=>((a&&a._dod)||0)>0 ? 'better' : 'worse';
+
+  /* 一个大环节下面的树，严格按编号的层级走：子环节 → 孙环节 → 商户。
+     编号就是层级，因果自下而上 —— 3.3 是子、3.3.2 是孙，是 3.3.2 把 3.3 带下去的，
+     所以先说 3.3 动了，再说是 3.3.2 造成的，商户拆在 3.3.2 上。
+     **没有孙环节告警就停在子环节拆商户。**
+
+     子环节自己没触发、但下面有孙环节触发时，照样把它写出来并标「未触发」——
+     否则孙环节会直接贴在大环节下面，层级看着是乱的（3.1.2 和 3.2 并排过）。
+     同层多个孙环节都触发时各自成行、各自拆商户，不做取舍：
+     只留最狠的那个会把兄弟静默吞掉，这正是这次要消灭的毛病。 */
+  /* 按编号前缀找下一层，不走 METRIC_CHILDREN。
+     环节1 是 1.1×1.2 累乘出来的、没有自己的指标行，CODE_METRIC['1'] 是 undefined，
+     顺着父指标找孩子会整棵树落空 —— 1.2 Paynow点击率 就这么丢过一次。 */
+  const childrenOf=(code)=>{
+    const pre=String(code)+'.', out=[];
+    for(const c of Object.keys(CODE_METRIC))
+      if(c.startsWith(pre) && c.slice(pre.length).indexOf('.')<0) out.push(CODE_METRIC[c]);
     return out;
   };
 
-  /* 把一组告警按 METRIC_PARENT 串成链。父子都告警时合成一条（父在前），
-     互不相干的各自成链。返回的每条链都从最浅的那个指标开始。
-
-     一条链每层只能往下带一个子指标（`→` 这种写法表达不了分叉），
-     所以同层有多个子指标都在告警时，取动得最狠的那支接下去，
-     **剩下的兄弟各自另起一条链** —— 不能因为没被选上就不播报了。
-     这里踩过一次：只留 kids[0] 会把 3.2.1（+7.3%）连同它的商户一起
-     静默吞掉，因为同层的 3.2.2（+8.2%）赢了。 */
-  const buildChains=(list)=>{
-    const byMetric={}; list.forEach(a=>{ byMetric[a['异常指标']]=a; });
-    const used=new Set(), chains=[];
-    // 浅的先当链首，保证父一定排在子之前
-    const order=list.slice().sort((x,y)=>(x._depth||0)-(y._depth||0));
-    for(const a of order){
-      if(used.has(a['异常指标'])) continue;
-      const chain=[a]; used.add(a['异常指标']);
-      for(;;){
-        const kids=(METRIC_CHILDREN[chain[chain.length-1]['异常指标']]||[])
-          .map(k=>byMetric[k]).filter(k=>k && !used.has(k['异常指标']))
-          .sort((x,y)=>Math.abs(y._dod||0)-Math.abs(x._dod||0));
-        if(!kids.length) break;
-        chain.push(kids[0]); used.add(kids[0]['异常指标']);
+  const stageTree=(src, code)=>{
+    const A=byMetric[src]||{}, lines=[]; let n=0;
+    for(const kid of childrenOf(code)){
+      const kA=A[kid];
+      const grands=childrenOf(METRIC_CODE[kid]||'').filter(g=>A[g])
+        .sort((x,y)=>Math.abs(A[y]._dod||0)-Math.abs(A[x]._dod||0));
+      if(!kA && !grands.length) continue;              // 这一支没动静，不占篇幅
+      lines.push(`     └ ${kid} ${rateTxt(src,kid,kA)}`);
+      if(kA) n++;
+      if(!grands.length){                               // 没有孙 → 就停在子环节做商户分析
+        lines.push(...merchants(src, kid, dirOf(kA), '        '));
+        continue;
       }
-      chains.push(chain);
+      for(const g of grands){
+        lines.push(`        └ ${g} ${rateTxt(src,g,A[g])}`);
+        lines.push(...merchants(src, g, dirOf(A[g]), '           '));
+        n++;
+      }
     }
-    return chains;
-  };
-
-  /* 按所属大环节分组。「环节3 拉低整体 −3.59pt」是整个环节的量，
-     写在每条告警后面会同一句话重复三遍 —— 提到组标题上说一次。
-     这个数才是判断要不要管的依据：挂在只拉低 0.18pt 的环节下面，
-     指标本身跌 30% 也是小事；而这一点单看相对跌幅完全看不出来。 */
-  const stageContrib=(src)=>{
-    const f=(stages||{})[src], o={};
-    if(f && f.stages) f.stages.forEach(s=>{ o[s.code]=s.contrib; });
-    return o;
+    return {lines, n};
   };
 
   let budget=BROADCAST_MAX_CHARS, dropped=0;
   for(const s of (srcStory||[])){
+    const f=(stages||{})[s.src];
     L.push(`■ ${s.src}｜业务单支付成功率 ${pct(s.overallT)}（${P_.dod} ${ptFmt(s.dOverall)}，上期 ${pct(s.overallY)}）`);
-    // 和整体同向的那侧先写 —— 那才是"为什么涨/为什么跌"的答案
+    const ss=((f&&f.stages)||[]).filter(x=>x.contrib!=null);
+    if(!ss.length) continue;
+    // 和整体同向、贡献最大的那个就是「主要来自」；其余按影响绝对值排，重的先说
     const rising = s.dOverall>=0;
-    const main = rising ? s.up : s.down;
-    const counter = rising ? s.down : s.up;
-    if(main){
-      L.push(stageLine(main, true, rising));
-      const c=chainLine(main); if(c) L.push(c);
-      L.push(...merchantLines(main));
-    }
-    // 反方向只在够大时才写，免得为凑格式报 0.01pt 的噪声
-    if(counter && Math.abs(counter.st.contrib)>=COUNTER_DIR_FLOOR){
-      L.push(stageLine(counter, false, !rising));
-      const c=chainLine(counter); if(c) L.push(c);
-      L.push(...merchantLines(counter));
-    }
-    // 该来源其余触发的告警，按所属大环节归堆。留了字数上限：宁可明说"还有 N 条"，
-    // 也不要整条消息超长被接口拒掉 —— 那样是一条都收不到，且未必看得出是长度问题
-    const cb=stageContrib(s.src), byStage={};
-    for(const a of (restBySrc[s.src]||[])){
-      const k=a._stage!=null ? a._stage : '-';
-      (byStage[k]=byStage[k]||[]).push(a);
-    }
-    // 环节按对整体的影响排序，最要紧的那堆先出
-    const codes=Object.keys(byStage).sort((x,y)=>
-      Math.abs(cb[y]||0)-Math.abs(cb[x]||0));
-    for(const code of codes){
-      const c=cb[code];
-      const head=c!=null
-        ? `  · 环节${code}（${c<0?'拉低':'拉动'}整体 ${ptFmt(c)}）`
-        : `  · 环节${code}`;
-      let headEmitted=false;
-      // 组内先串成父→子的链，再按链首幅度排序
-      const chains=buildChains(byStage[code])
-        .sort((x,y)=>Math.abs(y[0]._dod||0)-Math.abs(x[0]._dod||0));
-      for(const ch of chains){
-        const blk=restLines(s.src, ch);
-        const cost=blk.join('\n').length+1+(headEmitted?0:head.length+1);
-        if(cost>budget){ dropped+=ch.length; continue; }
-        budget-=cost;
-        if(!headEmitted){ L.push(head); headEmitted=true; }
-        L.push(...blk);
+    const mainSt = ss.slice().sort((a,b)=> rising ? b.contrib-a.contrib : a.contrib-b.contrib)[0];
+    // 反方向拉得最狠的那个 —— 「同期拉升/拖累」讲的就是它，够大才值得说
+    const counterSt = ss.slice().sort((a,b)=> rising ? a.contrib-b.contrib : b.contrib-a.contrib)[0];
+    const others = ss.filter(x=>x!==mainSt).sort((a,b)=>Math.abs(b.contrib)-Math.abs(a.contrib));
+    for(const st of [mainSt, ...others]){
+      if(!st) continue;
+      const isMain = st===mainSt;
+      const t=stageTree(s.src, st.code);
+      let body=t.lines, cnt=t.n;
+      if(!body.length){
+        /* 这个环节下面一条告警都没触发。只有两种情况还值得占篇幅：
+           它是主环节（总得说清整体为什么动），或者它是反方向那个够大的
+           —— 那是「虽然跌了但某处在拉」的信息。其余一律略过：
+           环节1 拉低 0.19pt、商户比率 100.06%→100.00%，写出来纯是噪声。 */
+        const isCounter = st===counterSt && (st.contrib>=0)!==rising;
+        if(!isMain && !(isCounter && Math.abs(st.contrib)>=COUNTER_DIR_FLOOR)) continue;
+        body=merchants(s.src, `${st.code}. ${st.label}`, st.contrib>=0?'better':'worse', '     ');
       }
+      const up = st.contrib>=0;
+      const head=`  ${up?'↑':'↓'} ${isMain?'主要来自':(up?'同期拉升':'同期拖累')} 环节${st.code} ${st.label} `
+               + `${pct(st.rateY)}→${pct(st.rateT)}（${ptFmt(st.rateT-st.rateY)}，`
+               + `${st.contrib<0?'拉低':'拉动'}整体 ${ptFmt(st.contrib)}）`;
+      const cost=head.length+1+body.join('\n').length+1;
+      /* 字数上限：宁可明说「还有 N 条」，也不要整条消息超长被接口拒掉 ——
+         那样是一条都收不到，且失败原因未必看得出是长度。
+         但主环节不受这个限制：它是「这个来源为什么动」的答案，砍掉它就只剩
+         一行光秃秃的抬头，比少几条次要告警糟得多。来源就两个，主环节的量有上界。 */
+      if(!isMain && cost>budget){ dropped+=Math.max(cnt,1); continue; }
+      budget-=cost;
+      L.push(head, ...body);
     }
   }
   if(dropped) L.push(`（另有 ${dropped} 条告警因篇幅未列出，详见工作台页面）`);
