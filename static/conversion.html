@@ -1428,25 +1428,28 @@ function headlineLines(stages, alarms, tDate, srcStory){
         : merchants(s.src, `${mainSt.code}. ${mainSt.label}`, mainSt.contrib>=0?'better':'worse', '     ');
       emit(stageHead(mainSt,'主要问题'), body, t.n, true);
     }
-    // ② 次要问题：和整体同向、还有告警的环节，有几个说几个
-    const counters=[];
+    /* ② 次要问题：**只要环节下面还有触发的告警就报**，有几个说几个。
+       不看这个环节自己是涨是跌、贡献够不够大 —— 那两件事决定的是「要不要额外
+       给它一行没有告警的上下文」，不该决定它下面的负值报不报。
+       踩过：周报里 API直连 环节3 涨了 +0.07pt（反方向、又低于 0.1pt 门槛），
+       整段被丢，连带把 3.3.2 政策3DS通过率 −2.1% 这条负值一起吞掉了。 */
+    const quiet=[];
     for(const st of others){
-      const sameDir = (st.contrib>=0)===rising;
       const t=stageTree(s.src, st.code);
-      if(!sameDir){ counters.push(st); continue; }
-      if(!t.lines.length) continue;      // 没告警的同向环节是噪声，不占篇幅
+      if(!t.lines.length){ quiet.push(st); continue; }   // 没告警的留到 ④ 再挑
       emit(stageHead(st,'次要问题'), t.lines, t.n, false);
     }
     // ③ 3DS 交易占比上升，单独一段，不和上面的环节树混在一起
     const fr=fricTree(s.src);
     if(fr.lines.length) emit('  ↑ 3DS交易占比上升', fr.lines, fr.n, false);
-    // ④ 反方向：拉得最狠且够大的那个，说明「虽然整体在跌，但这里在拉」
-    for(const st of counters){
-      if(st!==counterSt || Math.abs(st.contrib)<COUNTER_DIR_FLOOR) continue;
-      const t=stageTree(s.src, st.code);
-      const body=t.lines.length ? t.lines
-        : merchants(s.src, `${st.code}. ${st.label}`, st.contrib>=0?'better':'worse', '     ');
-      emit(stageHead(st, st.contrib>=0?'同期拉升':'同期拖累'), body, t.n, false);
+    /* ④ 一条告警都没有的环节里，只挑反方向拉得最狠、且够大的那一个说一句
+       ——「整体在跌，但这里在拉」是有用的上下文。其余没告警的环节一律略过：
+       环节1 拉低 0.19pt、商户比率 100.06%→100.00%，写出来纯是噪声。 */
+    for(const st of quiet){
+      if(st!==counterSt || (st.contrib>=0)===rising) continue;
+      if(Math.abs(st.contrib)<COUNTER_DIR_FLOOR) continue;
+      const body=merchants(s.src, `${st.code}. ${st.label}`, st.contrib>=0?'better':'worse', '     ');
+      emit(stageHead(st, st.contrib>=0?'同期拉升':'同期拖累'), body, 1, false);
     }
   }
   if(dropped) L.push(`（另有 ${dropped} 条告警因篇幅未列出，详见工作台页面）`);
