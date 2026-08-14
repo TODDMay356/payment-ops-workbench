@@ -1304,7 +1304,16 @@ function headlineLines(stages, alarms, tDate, srcStory){
       `${pad}${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
       + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`);
   };
-  const dirOf=a=>((a&&a._dod)||0)>0 ? 'better' : 'worse';
+  /* dir 问的是「要恶化的那批商户还是好转的那批」，不是「涨的还是跌的」。
+     drillMetric 内部按 isF 把它翻回 delta 的符号：摩擦类涨=坏、通过率类跌=坏。
+     所以这里得先判断这次变动对该指标到底是好是坏，只看 _dod 的正负会翻车 ——
+     3.2.2 政策3DS交易占比 是摩擦类，涨 7.6% 是恶化，当成 better 传进去
+     筛出来的是**跌**的那批商户，播报上就成了「指标在涨、列出的商户全在跌」。
+     FRICTION_METRICS 里那四个（3.1.2 / 3.2 / 3.2.1 / 3.2.2）都踩了这个坑。 */
+  const dirOf=(a, metric)=>{
+    const rose=((a&&a._dod)||0)>0;
+    return (FRICTION_METRICS.includes(metric) ? rose : !rose) ? 'worse' : 'better';
+  };
 
   /* 一个大环节下面的树，严格按编号的层级走：子环节 → 孙环节 → 商户。
      编号就是层级，因果自下而上 —— 3.3 是子、3.3.2 是孙，是 3.3.2 把 3.3 带下去的，
@@ -1335,12 +1344,12 @@ function headlineLines(stages, alarms, tDate, srcStory){
       lines.push(`     └ ${kid} ${rateTxt(src,kid,kA)}`);
       if(kA) n++;
       if(!grands.length){                               // 没有孙 → 就停在子环节做商户分析
-        lines.push(...merchants(src, kid, dirOf(kA), '        '));
+        lines.push(...merchants(src, kid, dirOf(kA, kid), '        '));
         continue;
       }
       for(const g of grands){
         lines.push(`        └ ${g} ${rateTxt(src,g,A[g])}`);
-        lines.push(...merchants(src, g, dirOf(A[g]), '           '));
+        lines.push(...merchants(src, g, dirOf(A[g], g), '           '));
         n++;
       }
     }
