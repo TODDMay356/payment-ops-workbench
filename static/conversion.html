@@ -1333,9 +1333,15 @@ function headlineLines(stages, alarms, tDate, srcStory){
 
   const d0 = (typeof state!=='undefined' && state.data) ? state.data : null;
   const totalPO = d0 ? totalPOBySource(d0.mergedSite) : {};
+
+  /* 一条告警的指标行 + 它的 top3 商户。
+     带三态：根因=它就是原因；已解释=它下面还有更细的原因，别重复计；
+     局部=所属大环节其实没事，是局部波动。没有这个标，读的人分不出
+     「3.3 和 3.3.2 都在跌」是两件事还是同一件事的两种说法。 */
   const restLines=(src,a)=>{
     const m=a['异常指标'];
-    const out=[`  · ${m} ${a['上期比率']}→${a['本期比率']}（${a['环比']}）`];
+    const role=a._role ? `，${a._role}` : '';
+    const out=[`     ${m} ${a['上期比率']}→${a['本期比率']}（${a['环比']}${role}）`];
     if(!d0) return out;
     let rows=[];
     try{
@@ -1343,9 +1349,19 @@ function headlineLines(stages, alarms, tDate, srcStory){
                        totalPO[src]||0, d0.hasSite, (a._dod||0)>0 ? 'better' : 'worse')||[];
     }catch(e){ rows=[]; }
     rows.slice(0,BROADCAST_PRIO_TOP).forEach(r=>out.push(
-      `     ${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
+      `        ${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
       + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`));
     return out;
+  };
+
+  /* 按所属大环节分组。「环节3 拉低整体 −3.59pt」是整个环节的量，
+     写在每条告警后面会同一句话重复三遍 —— 提到组标题上说一次。
+     这个数才是判断要不要管的依据：挂在只拉低 0.18pt 的环节下面，
+     指标本身跌 30% 也是小事；而这一点单看相对跌幅完全看不出来。 */
+  const stageContrib=(src)=>{
+    const f=(stages||{})[src], o={};
+    if(f && f.stages) f.stages.forEach(s=>{ o[s.code]=s.contrib; });
+    return o;
   };
 
   let budget=BROADCAST_MAX_CHARS, dropped=0;
@@ -1366,12 +1382,30 @@ function headlineLines(stages, alarms, tDate, srcStory){
       const c=chainLine(counter); if(c) L.push(c);
       L.push(...merchantLines(counter));
     }
-    // 该来源其余触发的告警。留了字数上限：宁可明说"还有 N 条"，
+    // 该来源其余触发的告警，按所属大环节归堆。留了字数上限：宁可明说"还有 N 条"，
     // 也不要整条消息超长被接口拒掉 —— 那样是一条都收不到，且未必看得出是长度问题
+    const cb=stageContrib(s.src), byStage={};
     for(const a of (restBySrc[s.src]||[])){
-      const blk=restLines(s.src, a), cost=blk.join('\n').length+1;
-      if(cost>budget){ dropped++; continue; }
-      budget-=cost; L.push(...blk);
+      const k=a._stage!=null ? a._stage : '-';
+      (byStage[k]=byStage[k]||[]).push(a);
+    }
+    // 环节按对整体的影响排序，最要紧的那堆先出
+    const codes=Object.keys(byStage).sort((x,y)=>
+      Math.abs(cb[y]||0)-Math.abs(cb[x]||0));
+    for(const code of codes){
+      const c=cb[code];
+      const head=c!=null
+        ? `  · 环节${code}（${c<0?'拉低':'拉动'}整体 ${ptFmt(c)}）`
+        : `  · 环节${code}`;
+      let headEmitted=false;
+      for(const a of byStage[code]){
+        const blk=restLines(s.src, a);
+        const cost=blk.join('\n').length+1+(headEmitted?0:head.length+1);
+        if(cost>budget){ dropped++; continue; }
+        budget-=cost;
+        if(!headEmitted){ L.push(head); headEmitted=true; }
+        L.push(...blk);
+      }
     }
   }
   if(dropped) L.push(`（另有 ${dropped} 条告警因篇幅未列出，详见工作台页面）`);
