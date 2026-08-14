@@ -1334,24 +1334,65 @@ function headlineLines(stages, alarms, tDate, srcStory){
   const d0 = (typeof state!=='undefined' && state.data) ? state.data : null;
   const totalPO = d0 ? totalPOBySource(d0.mergedSite) : {};
 
-  /* 一条告警的指标行 + 它的 top3 商户。
-     带三态：根因=它就是原因；已解释=它下面还有更细的原因，别重复计；
-     局部=所属大环节其实没事，是局部波动。没有这个标，读的人分不出
-     「3.3 和 3.3.2 都在跌」是两件事还是同一件事的两种说法。 */
-  const restLines=(src,a)=>{
-    const m=a['异常指标'];
-    const role=a._role ? `，${a._role}` : '';
-    const out=[`     ${m} ${a['上期比率']}→${a['本期比率']}（${a['环比']}${role}）`];
+  /* 一条告警链：父指标先说，再说是被哪个子指标带下去的，商户按最细那层拆。
+     编号本身就是层级 —— 3.3 是子环节、3.3.2 是孙环节，因果是 3.3.2 → 3.3，
+     所以必须 3.3 在前。以前按跌幅排，3.3.2（-7.6%）反而排在 3.3（-5.3%）前面，
+     因果倒着讲；而且两条各带一份 top3，商户几乎完全重复
+     （政策3DS 占 3DS 的大头，拆出来本来就是同一批人）。
+     写法和上面主环节的「穿透」保持一致，一条消息里不搞两套说法。
+
+     三态只留 局部 和 未解释：根因/已解释 在链式结构里是自明的
+     —— 排在链尾的就是根因，上面有链尾的就是已解释。
+     局部（所属大环节其实没事）和未解释（子指标都正常、另有原因）
+     这两个结构表达不出来，得留着。 */
+  const roleTag=a=>(a._role==='局部'||a._role==='未解释') ? `，${a._role}` : '';
+  const metricTxt=a=>`${a['异常指标']} ${a['上期比率']}→${a['本期比率']}（${a['环比']}${roleTag(a)}）`;
+  const restLines=(src, chain)=>{
+    const head=chain[0], leaf=chain[chain.length-1];
+    const out=[`     ${metricTxt(head)}`];
+    if(chain.length>1){
+      const code=METRIC_CODE[leaf['异常指标']]||leaf['异常指标'];
+      out.push(`        └ 穿透：${chain.slice(1).map(metricTxt).join(' → ')}；以下商户按 ${code} 拆`);
+    }
     if(!d0) return out;
+    const m=leaf['异常指标'];
     let rows=[];
     try{
       rows=drillMetric(d0.mergedSite, src, m, FRICTION_METRICS.includes(m),
-                       totalPO[src]||0, d0.hasSite, (a._dod||0)>0 ? 'better' : 'worse')||[];
+                       totalPO[src]||0, d0.hasSite, (leaf._dod||0)>0 ? 'better' : 'worse')||[];
     }catch(e){ rows=[]; }
     rows.slice(0,BROADCAST_PRIO_TOP).forEach(r=>out.push(
       `        ${shortMerchant(r['商户名称'])} ${shortSite(r['站点'])}`
       + ` PO ${r['本期PO总单量'].toLocaleString()}笔，${r['上期比率']}→${r['本期比率']}`));
     return out;
+  };
+
+  /* 把一组告警按 METRIC_PARENT 串成链。父子都告警时合成一条（父在前），
+     互不相干的各自成链。返回的每条链都从最浅的那个指标开始。
+
+     一条链每层只能往下带一个子指标（`→` 这种写法表达不了分叉），
+     所以同层有多个子指标都在告警时，取动得最狠的那支接下去，
+     **剩下的兄弟各自另起一条链** —— 不能因为没被选上就不播报了。
+     这里踩过一次：只留 kids[0] 会把 3.2.1（+7.3%）连同它的商户一起
+     静默吞掉，因为同层的 3.2.2（+8.2%）赢了。 */
+  const buildChains=(list)=>{
+    const byMetric={}; list.forEach(a=>{ byMetric[a['异常指标']]=a; });
+    const used=new Set(), chains=[];
+    // 浅的先当链首，保证父一定排在子之前
+    const order=list.slice().sort((x,y)=>(x._depth||0)-(y._depth||0));
+    for(const a of order){
+      if(used.has(a['异常指标'])) continue;
+      const chain=[a]; used.add(a['异常指标']);
+      for(;;){
+        const kids=(METRIC_CHILDREN[chain[chain.length-1]['异常指标']]||[])
+          .map(k=>byMetric[k]).filter(k=>k && !used.has(k['异常指标']))
+          .sort((x,y)=>Math.abs(y._dod||0)-Math.abs(x._dod||0));
+        if(!kids.length) break;
+        chain.push(kids[0]); used.add(kids[0]['异常指标']);
+      }
+      chains.push(chain);
+    }
+    return chains;
   };
 
   /* 按所属大环节分组。「环节3 拉低整体 −3.59pt」是整个环节的量，
@@ -1398,10 +1439,13 @@ function headlineLines(stages, alarms, tDate, srcStory){
         ? `  · 环节${code}（${c<0?'拉低':'拉动'}整体 ${ptFmt(c)}）`
         : `  · 环节${code}`;
       let headEmitted=false;
-      for(const a of byStage[code]){
-        const blk=restLines(s.src, a);
+      // 组内先串成父→子的链，再按链首幅度排序
+      const chains=buildChains(byStage[code])
+        .sort((x,y)=>Math.abs(y[0]._dod||0)-Math.abs(x[0]._dod||0));
+      for(const ch of chains){
+        const blk=restLines(s.src, ch);
         const cost=blk.join('\n').length+1+(headEmitted?0:head.length+1);
-        if(cost>budget){ dropped++; continue; }
+        if(cost>budget){ dropped+=ch.length; continue; }
         budget-=cost;
         if(!headEmitted){ L.push(head); headEmitted=true; }
         L.push(...blk);
