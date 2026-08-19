@@ -515,6 +515,9 @@ const COLUMN_MAP = {
   "风控3DS决策":"risk_3ds","政策3DS决策":"policy_3ds","商户3ds决策":"merchant_3ds",
 };
 
+// 派生字段：不来自源表，由清洗阶段算出。分组时要放行，见 generateGroupedTable
+const DERIVED_COLS = new Set(["amount_range","day"]);
+
 const STATUS_SUCCESS = "支付成功";
 const STATUS_FAIL = "支付失败";
 const DRILL_DOWN_TOP_N = 3;
@@ -679,6 +682,10 @@ function loadAndClean(rawRows, headers){
     if(r.currency !== null && r.currency !== undefined) r.currency = String(r.currency).trim();
     // amount_range（null = 超范围/缺失，对应 pd.cut 的 NaN）
     r.amount_range = cutAmount(r.amount);
+    // day：按日聚合用。「先排除技术故障、再谈业务」要能按天看错误码有没有结构性突变，
+    // 没有这个字段就只能对着期间总数猜，故障窗口和真实业务变化分不开。
+    r.day = pt.getFullYear()+"-"+String(pt.getMonth()+1).padStart(2,"0")
+              +"-"+String(pt.getDate()).padStart(2,"0");
     out.push(r);
   }
   return out;
@@ -813,7 +820,10 @@ function generateGroupedTable(dfCurr, groupCol, groupLabel, dfLast, categories){
     ? [groupLabel,"交易单量_上期","交易单量_本期","单量对比值","占比_上期","占比_本期","占比差额","通过率_上期","通过率_本期","通过率对比值","乘积"]
     : [groupLabel,"交易笔数","占比","成功笔数","通过率","影响力"];
   if(totalCurr===0 && totalLast===0) return T(cols);
-  if(!hasCol(groupCol) && groupCol!=="amount_range") return T(cols);
+  // hasCol 查的是源文件里有没有这一列，派生字段天然查不到 ——
+  // amount_range 由 cutAmount 算出、day 由 pay_time 截出，都不在 COLUMN_MAP 里。
+  // 以前这里只给 amount_range 开了个特例，新增 day 时踩了同一个坑：表头出来了、一行数据没有。
+  if(!hasCol(groupCol) && !DERIVED_COLS.has(groupCol)) return T(cols);
 
   if(compare){
     const gc = new Map(groupedRows(dfCurr,groupCol,categories).map(x=>[x.key,x]));
@@ -887,7 +897,7 @@ function generateCrossTable(dfCurr, colA, labelA, colB, labelB, dfLast){
     ? [labelA,labelB,"交易单量_上期","交易单量_本期","单量对比值","占比_上期","占比_本期","占比差额","通过率_上期","通过率_本期","通过率对比值","乘积"]
     : [labelA,labelB,"交易笔数","占比","成功笔数","通过率","影响力"];
   if(totalCurr===0 && totalLast===0) return T(cols);
-  if((!hasCol(colA)&&colA!=="amount_range")||(!hasCol(colB)&&colB!=="amount_range")) return T(cols);
+  if((!hasCol(colA)&&!DERIVED_COLS.has(colA))||(!hasCol(colB)&&!DERIVED_COLS.has(colB))) return T(cols);
 
   if(compare){
     const gc=crossAgg(dfCurr,colA,colB), gl=crossAgg(dfLast,colA,colB);
@@ -921,7 +931,7 @@ function generateCrossTable(dfCurr, colA, labelA, colB, labelB, dfLast){
    维度×维度 矩阵（对应 generate_cross_matrix，始终看本期数据）
    ============================================================ */
 function generateCrossMatrix(dfCurr, colA, labelA, colB, labelB){
-  if((!hasCol(colA)&&colA!=="amount_range")||(!hasCol(colB)&&colB!=="amount_range")||dfCurr.length===0) return null;
+  if((!hasCol(colA)&&!DERIVED_COLS.has(colA))||(!hasCol(colB)&&!DERIVED_COLS.has(colB))||dfCurr.length===0) return null;
   const norm = v => { let s=(v==null)?"":String(v).trim(); if(["nan","none",""].includes(s.toLowerCase()))s=""; return s; };
   const rows = dfCurr.filter(r => norm(r[colA])!=="" && norm(r[colB])!=="");
   if(rows.length===0) return null;
@@ -955,7 +965,7 @@ function generateDimFailreasonCross(dfCurrEx, colA, labelA, dfLastEx, onlyDims){
   const cols = compare
     ? [labelA,"支付失败原因","失败笔数_上期","失败笔数_本期","失败单量对比值","占该维度失败比_上期","占该维度失败比_本期","占总失败比_本期"]
     : [labelA,"支付失败原因","失败笔数","占该维度失败比","占总失败比"];
-  if(!hasCol(colA) && colA!=="amount_range") return T(cols);
+  if(!hasCol(colA) && !DERIVED_COLS.has(colA)) return T(cols);
 
   let failC = excludeL3(dfCurrEx.filter(r=>r.status===STATUS_FAIL));
   let failL = compare ? excludeL3(dfLastEx.filter(r=>r.status===STATUS_FAIL)) : null;
@@ -1168,6 +1178,15 @@ function generateFullAnalysis(dfCurr, prefix, sheets, C, dfLast){
   if(binAvail) sheets.push([`${prefix}_BIN国家`,tBin]);
   sheets.push([`${prefix}_金额区间`,tAmount]);
   sheets.push([`${prefix}_支付方式`,tMethod]);
+
+  /* 按日时序。刻意**不做**两期对齐 —— 两个周期的日期集合本来就不重合，
+     硬按日期对齐会得到一堆只有单边数据的行，占比差额毫无意义。
+     这张表回答的是「本期内部哪天出现突变」，两期各出一张各看各的。 */
+  const tDay = generateGroupedTable(dfCurrEx,"day","日期",null);
+  sheets.push([`${prefix}_按日`,tDay]);
+  if(compare) sheets.push([`${prefix}_按日_上期`,generateGroupedTable(dfLastEx,"day","日期",null)]);
+  // 日期×失败原因：找错误码的结构切换（某个码从低位跳高位、或码之间整体换挡）
+  pushDimFail(dfCurrEx,prefix,"day","日期","日",tDay,sheets,null);
 
   if(binAvail){
     pushDimDim(dfCurrEx,prefix,"bin_country","支付卡BIN国家","BIN","amount_range","交易金额区间","金额",sheets,compare?dfLastEx:null);
@@ -1697,6 +1716,10 @@ function gridTableHTML(table){
 }
 function buildReport(){
   const {curr,last}=periodRows(); const compare=last!=null;
+  // periodRows 在日期区间还没就绪时会回 null（比如刚切到对比模式、上期日期还空着）。
+  // 以前直接往下走，下面那句 sc.length 就抛 TypeError，页面看着像卡死；
+  // 空数据本来就有「当前时间/站点下无数据」的正常提示，走同一条路即可。
+  if(!curr){ $("#reportTables").innerHTML='<div class="empty">请先选好时间区间</div>'; $("#reportCnt").textContent=""; return; }
   const sc=state.site==="__all__"?curr:curr.filter(x=>x.website===state.site);
   const sl=compare?(state.site==="__all__"?last:last.filter(x=>x.website===state.site)):null;
   REPORT_SHEETS=[]; REPORT_CONCL=[]; AISHEET=null;
@@ -1721,29 +1744,79 @@ function exportExcel(){
   const ts=new Date().toISOString().slice(0,19).replace(/[-:T]/g,"").replace(/(\d{8})(\d{6})/,"$1_$2");
   XLSX.writeFile(wb,`商户分析报告_${ts}.xlsx`);
 }
-/* AI 提示词大纲：提炼自一份高质量支付流失分析报告的结构与分析纪律 */
+/* AI 提示词大纲。
+   融合了《支付流水周期对比分析》那套七步法的分析纪律 —— 但**只保留本工具的数据
+   支撑得起的部分**。原提示词面向完整流水明细（含买家邮箱、买家IP、收货国家、
+   流水单号/支付单号双口径），本工具的 COLUMN_MAP 里没有这些列，
+   所以第 5 步「买家个体行为 / 新老买家 / 一致性与集中度」整块做不了。
+   照抄进去只会让模型花大半篇幅写「数据不足」，或者更糟 —— 编出来。
+   所以下面把做不到的直接声明为禁区，把做得到的写成硬要求。 */
 const AI_OUTLINE=
-`你是一名支付风控/商户运营数据分析师。请基于下方"规则计算结论"与"关键明细表"，撰写一份结构化的支付成功率/流失分析报告。
+`你是支付业务的数据分析师。请基于下方"规则计算结论"与"关键明细表"，撰写一份支付成功率/流失分析报告。
+
+【本次数据的边界 —— 先读这段，避免要求做不到的分析】
+可用维度：日期、支付方式、交易金额区间、支付卡BIN国家、通道、备案网址(站点)、
+是否3D交易、风控/政策/商户 3DS 决策、失败原因与报错编码。
+不可用维度：买家邮箱、买家IP、收货国家、卡号、卡组、支付单号。
+因此以下分析**不要做、也不要说"建议补充"以外的话**：买家个体行为（尝试笔数分布、
+全失败买家、多卡多IP）、新老买家重合、IP/BIN/收货国家一致性、BIN 前六位集中度、
+订单通过率与重试率（需要支付单号，本表一行一笔流水）。
+如某一步的数据不足以支撑结论，直接写明缺什么，不要用推测填补。
 
 【分析纪律 —— 必须遵守】
 1. 只使用给定的数字，绝不编造；数据里没有的就不写。
-2. 小样本谨慎：某个切片笔数很少（约 <5 笔）时，其通过率只用于"定位排查方向"，必须明确标注"样本有限、不作为结论依据或验收基线"。
-3. 区分"提供数据"与"策略建议"：涉及风控 3DS 触发 / 拦截策略是否调整时，只陈述其影响笔数与占比，把是否调整、如何调整交给风控侧判断，不代替风控做策略决策。
-4. 口径意识：留意"处理中"以及电汇/线下汇款等未决状态——它们可能不应计入流失。若发现这类情况，请指出并给出替代成功率口径（例如剔除后重算）。
-5. 避免重复计入：钱包类/本地支付（ApplePay、GooglePay、电汇、BOLETO 等）本身无卡 BIN，"无 BIN 国家"是正常现象而非数据缺失；已在支付方式维度归因过的，不在 BIN 维度重复下结论。
-6. 尽量做交叉归因：用"支付方式×失败原因"表说明失败集中在哪些方式（如某类 3DS 失败集中在某卡组织）。
+2. **先排故障、再谈业务。** 技术故障会把业务信号完全淹没，混在一起算出来的通过率变化
+   没有意义。必须先看「按日」和「日期×失败原因」两张表：某个错误码有没有从 0/低位
+   跳到高位、或错误码之间发生结构切换（例如失败原因从"引导换卡"整体切换到"重新验证"，
+   说明认证/路由链路变了，不是发卡行侧的随机波动）。
+   找到疑似故障窗口时：① 给出起止日期；② 用故障前的基线通过率做反事实，量化损失笔数；
+   ③ 检查同期未受影响的分支（如非3DS）通过率是否稳定，以排除通道整体故障。
+   最后说明：剔除故障日后差距是否仍然显著。若差距基本消失，结论就是故障，到此为止。
+3. **占比和通过率必须成对看。** 各分组通过率都没变、整体却跌了，这不是矛盾，是结构问题。
+   对比模式下每张分组表都同时给了「占比_上期/本期」和「通过率_上期/本期」，
+   请据此做加权分解：
+     总变化 ≈ Σ(w2-w1)·r1 [结构效应] + Σ w2·(r2-r1) [同口径通过率效应]
+   先只按 BIN国家 跑一次，再按 BIN×金额区间 跑一次，观察同口径效应是否收敛：
+     收敛到 ±3pp 以内 → 结论是流量结构变了，支付能力没变；
+     始终显著 → 存在真实的通过率劣化，继续找原因。
+   **必须明确写出结论属于哪一种，并给出两个效应各自的数值。**
+4. **每个结论都要能被对齐检验推翻一次。** 至少做到：
+   ① 怀疑某人群/某国家变差 → 按金额区间对齐后再比一次。同档位通过率不变 = 人群质量
+      没变，变的是客单价结构；
+   ② 某站点/支付方式通过率大跌 → 先检查它的流量构成有没有迁移，站点通过率的涨跌
+      经常是结构假象；
+   ③ 区分绝对量增长和占比增长 —— 单量翻倍时错误码计数必然上升，只有增速快于单量
+      增速才算真的恶化。
+5. 口径意识：本工具按「流水单状态 = 支付成功」计成功。若数据里存在"处理中"、
+   电汇/线下汇款等未决状态，或"已退款"（先成功后退，通常不应算失败），
+   请指出并给出替代口径下重算的成功率。
+6. 小样本谨慎：某个切片笔数很少（约 <5 笔）时，其通过率只用于"定位排查方向"，
+   必须标注"样本有限、不作为结论依据或验收基线"。
+7. 区分"提供数据"与"策略建议"：涉及风控 3DS 触发/拦截策略是否调整时，只陈述其影响
+   笔数与占比，把是否调整、如何调整交给风控侧判断，不代替风控做策略决策。
+8. 避免重复计入：钱包类/本地支付（ApplePay、GooglePay、电汇、BOLETO 等）本身无卡 BIN，
+   "无 BIN 国家"是正常现象而非数据缺失；已在支付方式维度归因过的，不在 BIN 维度重复下结论。
+9. 交叉归因：用「支付方式×失败原因」「BIN×金额区间」等交叉表说明失败集中在哪些组合，
+   而不是只报单维度。
 
 【输出结构 —— 不要使用 markdown 标题符号(#)】
-一、结论
+一、结论先行
   - 整体：总笔数 / 成功 / 失败 / 处理中（若有）/ 成功率
-  - 失败分类：把失败原因按"可优化程度"归为几组（如：需风控侧评估、需先确认状态、优化空间有限），每组给出笔数、占失败比、涉及的支付方式
-  - 主要发现：3–5 点，每点 = 现象 + 关键数字 + 归因 + 边界/口径说明
+  - **这次变化的拆账**：多少来自技术故障、多少来自流量结构、多少来自真实通过率劣化，
+    给数字；三者相加应能大致解释整体变化。对比模式下这段是重点。
+  - 失败分类：按"可优化程度"归组（如：需风控侧评估、需先确认状态、优化空间有限），
+    每组给出笔数、占失败比、涉及的支付方式
+  - 主要发现 3–5 点，每点 = 现象 + 关键数字 + 归因 + 边界/口径说明
 二、建议动作
   - 按"可确认程度 + 投入成本"排序，每条标注责任方（技术 / 风控 / 通道 / 产品业务）
-三、待确认事项
+三、容易误读的点
+  - 哪些表面现象不能直接归因（尤其是被结构效应解释掉的、以及小样本切片）
+四、待确认事项
   - 逐条列出：事项 | 责任方 | 影响（尤其是会影响成功率口径的问题）
+  - 例如投放变化、新站上线、风控策略调整、发版时点
 
-请用简体中文，分点作答。`;
+请用简体中文，分点作答。表格用中文表头，百分点统一写 pp，金额标币种。
+全程不要把技术故障造成的损失和业务结构变化混在一起讲。`;
 
 function serializeTable(t,maxRows){
   if(!t||!t.columns.length) return "";
@@ -1754,11 +1827,20 @@ function buildAIPrompt(){
   const find=suf=>{const e=REPORT_SHEETS.find(([n])=>n.endsWith(suf));return e?e[1]:null;};
   const parts=[];
   const add=(title,t,mx)=>{const s=serializeTable(t,mx);if(s)parts.push("【"+title+"】\n"+s);};
+  /* 表的顺序按纪律的执行顺序来：先按日排故障，再看单维度占比/通过率做加权分解，
+     最后才是交叉归因。工具其实生成了十来张表，以前只发四张 ——
+     第 2 条纪律要的按日时序、第 3 条要的 BIN×金额交叉，都在生成的表里躺着没发出去，
+     等于要求模型用它看不见的数据下结论。 */
+  add("按日（找故障窗口/突变点，纪律2）",find("_按日"),40);
+  add("按日_上期",find("_按日_上期"),40);
+  add("日期×失败原因（看错误码结构切换，纪律2）",find("_日x失败_全量"),60);
   add("失败原因（含占失败比/累计占失败比）",find("_失败原因"),30);
   add("支付方式通过率",find("_支付方式"),20);
   add("交易金额区间通过率",find("_金额区间"),12);
-  add("卡BIN国家通过率",find("_BIN国家"),20);
-  add("支付方式×失败原因（交叉归因用）",find("_方式x失败_全量"),40);
+  add("卡BIN国家通过率（占比+通过率成对，供加权分解用，纪律3）",find("_BIN国家"),20);
+  add("BIN国家×交易金额区间（加权分解第二层 / 同档位对齐，纪律3、4①）",find("_BINx金额_全量"),60);
+  add("支付方式×失败原因（交叉归因用，纪律9）",find("_方式x失败_全量"),40);
+  add("交易金额区间×支付方式（结构迁移检查，纪律4②）",find("_金额x方式_全量"),40);
   const funnel=(typeof funnelSummaryText==="function")?funnelSummaryText():"";
   const head=AI_OUTLINE+(funnel?"\n\n【特别要求】本商户提供了支付转化漏斗数据。请务必先依据漏斗指出流失最大的业务环节（哪一环最该优先排查），再结合下方交易明细做原因归因；两者要对应起来（例如漏斗指向网关/3DS 环节时，用失败原因表里的 3DS/网关/风控 数据佐证）。":"");
   const funnelBlock=funnel?("\n\n===== 支付转化漏斗（优先定位环节） =====\n"+funnel):"";
