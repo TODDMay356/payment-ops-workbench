@@ -344,7 +344,12 @@ def ai_summary():
     base = (ai.get("base_url") or "https://api.deepseek.com").rstrip("/")
     payload = {
         "model": model,
-        "max_tokens": int(body.get("max_tokens") or ai.get("max_tokens") or 2000),
+        # config.json 说了算，工具页传来的只当没配置时的兜底。
+        # 原来是 body 在前，而两个工具页都硬编码 max_tokens=2000
+        # （conversion.html 里直接写死，merchant.html 是 AI_MAX_TOKENS=2000），
+        # 于是 config.json 里改多少都会被盖掉 —— 表现成「我明明调大了还是报额度不够」，
+        # 而报错本身还在让人去改那个根本不起作用的字段。
+        "max_tokens": int(ai.get("max_tokens") or body.get("max_tokens") or 2000),
         "stream": False,
         "messages": [
             {"role": "system",
