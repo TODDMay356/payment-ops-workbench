@@ -79,6 +79,12 @@ except ImportError as _e:
 
 CONFIG_SOURCE = ""      # 实际读的是哪个文件，/api/workbench/bootstrap 会带出去
 
+# config.json 没写 ai.max_tokens 时用它。和 config.example.json 保持一致，
+# 改一处就够 —— 原来这个数字是直接埋在调用参数里的表达式里的，
+# 页面上还各有一份，三处不一致时没人看得出以哪个为准。
+# 给 8000 是因为会思考的模型要先花掉一大截额度想，2000 常常想完就没额度写正文。
+AI_MAX_TOKENS_DEFAULT = 8000
+
 
 def _load_config() -> dict:
     """读 app.py 同目录下的 config.json。
@@ -304,7 +310,7 @@ def bootstrap():
             # 界面就显示着一个根本不会被调用成功的名字，等于替配置错误打掩护
             "model": ((config.get("ai") or {}).get("model") or "").strip(),
             # 带出来是为了能隔着浏览器确认「我改的那个数到底进没进来」
-            "max_tokens": int((config.get("ai") or {}).get("max_tokens") or 2000),
+            "max_tokens": int((config.get("ai") or {}).get("max_tokens") or AI_MAX_TOKENS_DEFAULT),
             "endpoint": f"{base}/api/ai/summary",
         },
     })
@@ -345,11 +351,10 @@ def ai_summary():
     payload = {
         "model": model,
         # config.json 说了算，工具页传来的只当没配置时的兜底。
-        # 原来是 body 在前，而两个工具页都硬编码 max_tokens=2000
-        # （conversion.html 里直接写死，merchant.html 是 AI_MAX_TOKENS=2000），
-        # 于是 config.json 里改多少都会被盖掉 —— 表现成「我明明调大了还是报额度不够」，
-        # 而报错本身还在让人去改那个根本不起作用的字段。
-        "max_tokens": int(ai.get("max_tokens") or body.get("max_tokens") or 2000),
+        # 原来是 body 在前，而 merchant.html 的代转调用硬编码了 max_tokens=2000，
+        # 于是 config.json 里改多少都被盖掉 —— 表现成「我明明调大了还是报额度不够」，
+        # 而报错本身还在让人去改那个根本不起作用的字段。那个 2000 已经从页面拿掉。
+        "max_tokens": int(ai.get("max_tokens") or body.get("max_tokens") or AI_MAX_TOKENS_DEFAULT),
         "stream": False,
         "messages": [
             {"role": "system",

@@ -541,7 +541,7 @@ const ANOMALY_MIN_SHARE_ABS = 3;
 
 const AI_BASE_URL = "https://api.deepseek.com";
 const AI_MODEL = "deepseek-v4-pro";
-const AI_MAX_TOKENS = 2000;
+const AI_MAX_TOKENS = 8000   // 直连路径专用；代转时以 config.json 为准;
 
 /* 本页被工作台托管时，AI 调用改走工作台代转：
    key 留在服务端的 config.json，也不会被浏览器 CORS 拦。
@@ -1766,11 +1766,14 @@ function buildAIPrompt(){
     "\n\n===== 关键明细表 =====\n"+parts.join("\n\n")+"\n===== 数据结束 =====";
 }
 
-/** 经工作台代转：key 在服务端，不会被 CORS 拦 */
+/** 经工作台代转：key 在服务端，不会被 CORS 拦。
+    不传 max_tokens —— 代转时以工作台 config.json 的 ai.max_tokens 为准。
+    以前这里带上 AI_MAX_TOKENS(=2000)，后端又把请求体排在配置前面，
+    于是 config.json 里怎么调都被这个 2000 盖掉。 */
 async function aiViaWorkbench(prompt){
   const resp=await fetch(WB_AI.endpoint||'/api/ai/summary',{method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({prompt, max_tokens:AI_MAX_TOKENS})});
+    body:JSON.stringify({prompt})});
   const data=await resp.json().catch(()=>({}));
   if(!resp.ok || !data.ok) throw new Error(data.msg || ("工作台返回 "+resp.status));
   return (data.content||"").trim();
