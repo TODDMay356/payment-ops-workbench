@@ -77,19 +77,46 @@ except ImportError as _e:
 
 # ---------- 配置加载 ----------
 
+CONFIG_SOURCE = ""      # 实际读的是哪个文件，/api/workbench/bootstrap 会带出去
+
+
 def _load_config() -> dict:
+    """读 app.py 同目录下的 config.json。
+
+    配置是跟着 **app.py 所在目录** 走的（见 HERE），不是跟着当前工作目录。
+    而 config.json 在 .gitignore 里 —— 新 clone 出来的目录里根本没有它。
+    所以「在 A 目录改了配置、却从 B 目录启动」改动完全不生效，
+    以前这种情况会静默退到 config.example.json（api_key 是空的），
+    表现成「我明明改了怎么没用」。现在明确说是哪个文件、缺的又是哪个。
+    """
+    global CONFIG_SOURCE
     if not CONFIG_PATH.exists():
-        # 没填配置也不致命，首页会提示"未配置"
+        # 没填配置也不致命，首页会提示"未配置"；但必须说清楚用的不是 config.json
         if EXAMPLE_CONFIG_PATH.exists():
             try:
-                return json.loads(EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
+                cfg = json.loads(EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
+                CONFIG_SOURCE = str(EXAMPLE_CONFIG_PATH)
+                print(f"[config] ⚠ 找不到 {CONFIG_PATH}，暂时用 config.example.json 顶上。\n"
+                      f"[config]   示例配置里 api_key 是空的，飞书推送和 AI 总结都不会通。\n"
+                      f"[config]   如果你刚把仓库 clone 到新目录：config.json 不在仓库里，\n"
+                      f"[config]   要从旧目录把它复制过来（mailbox.json 和 data\\ 同理）。",
+                      file=sys.stderr)
+                return cfg
             except Exception:
                 pass
+        CONFIG_SOURCE = ""
+        print(f"[config] ⚠ 找不到 {CONFIG_PATH}，也没有可用的示例配置，全部走默认值。",
+              file=sys.stderr)
         return {}
     try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        CONFIG_SOURCE = str(CONFIG_PATH)
+        print(f"[config] 已加载 {CONFIG_PATH}", file=sys.stderr)
+        return cfg
     except json.JSONDecodeError as e:
-        print(f"[config] 解析 config.json 失败：{e}", file=sys.stderr)
+        # 语法错误时退到空配置，同样不能不吭声 —— 否则和「没这个文件」表现一样
+        CONFIG_SOURCE = ""
+        print(f"[config] ⚠ 解析 {CONFIG_PATH} 失败，本次全部走默认值：{e}", file=sys.stderr)
         return {}
 
 
@@ -267,12 +294,17 @@ def bootstrap():
             "table_id": b.get("table_id") or "workbench",
         },
         "card": True,
+        # 这次实际读的是哪个配置文件。改了配置却不生效时，第一件事就是看它 ——
+        # 多半是改了 A 目录的 config.json、却从 B 目录启动的工作台
+        "config_source": CONFIG_SOURCE,
         # 工具页据此决定要不要显示「AI 总结」按钮、要不要还让用户填 key
         "ai": {
             "available": bool((config.get("ai") or {}).get("api_key")),
             # 如实回配置里那个值。以前缺省顶一个 deepseek-chat 上去，
             # 界面就显示着一个根本不会被调用成功的名字，等于替配置错误打掩护
             "model": ((config.get("ai") or {}).get("model") or "").strip(),
+            # 带出来是为了能隔着浏览器确认「我改的那个数到底进没进来」
+            "max_tokens": int((config.get("ai") or {}).get("max_tokens") or 2000),
             "endpoint": f"{base}/api/ai/summary",
         },
     })
